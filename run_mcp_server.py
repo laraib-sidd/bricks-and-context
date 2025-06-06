@@ -19,6 +19,7 @@ Environment Variables:
 from src.mcp_server.mcp_server import run_server
 from src.mcp_server.logger import log_server_event, logger
 
+
 if __name__ == "__main__":
     log_server_event("START", "Initializing Bricks and Context MCP Server")
     log_server_event("TRANSPORT", "Using stdio transport for AI client connections")

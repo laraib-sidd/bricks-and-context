@@ -12,6 +12,9 @@ from databricks.sql.client import Connection
 from .connection_pool import get_pool, PooledConnection
 from .job_manager import get_job_manager
 from .logger import log_mcp_event
+from .cache_manager import get_cache_stats
+from .performance_monitor import get_performance_stats
+from .error_handler import get_error_handler
 
 
 # Create FastMCP server instance optimized for AI solutions
@@ -667,6 +670,271 @@ def get_job_run_output(run_id: int) -> str:
         get_job_run_output(456789)
     """
     return _get_job_run_output(run_id)
+
+
+# ===== PERFORMANCE MONITORING TOOLS =====
+
+def _cache_stats() -> str:
+    """Core cache statistics logic"""
+    try:
+        log_mcp_event("cache_stats", "START", "Getting cache performance statistics")
+        
+        stats = get_cache_stats()
+        
+        # Format as markdown table
+        lines = [
+            "# 🚀 Cache Performance Statistics",
+            "",
+            "## Overview",
+            f"- **Total Entries**: {stats['total_entries']:,}",
+            f"- **Max Capacity**: {stats['max_entries']:,}",
+            f"- **Hit Rate**: {stats['hit_rate_percent']:.2f}%",
+            f"- **Cache Hits**: {stats['hits']:,}",
+            f"- **Cache Misses**: {stats['misses']:,}",
+            f"- **Expired Entries**: {stats['expired_entries']:,}",
+            f"- **Memory Usage**: {stats['memory_usage_estimate']}",
+            "",
+        ]
+        
+        # Category breakdown
+        if stats['categories']:
+            lines.extend([
+                "## Cache Categories",
+                "",
+                "| Category | Count | Description |",
+                "|----------|-------|-------------|"
+            ])
+            
+            category_descriptions = {
+                'health': 'Connection health status (5 min TTL)',
+                'schema': 'Database schema information (30 min TTL)',
+                'table': 'Table metadata and structure (15 min TTL)',
+                'query': 'Query results (5 min TTL)',
+                'job': 'Job information (2 min TTL)',
+                'connection': 'Connection status (1 min TTL)'
+            }
+            
+            for category, count in stats['categories'].items():
+                description = category_descriptions.get(category, 'Unknown category')
+                lines.append(f"| {category} | {count:,} | {description} |")
+            
+            lines.append("")
+        
+        # Performance insights
+        total_requests = stats['hits'] + stats['misses']
+        if total_requests > 0:
+            lines.extend([
+                "## Performance Insights",
+                "",
+                f"- **Cache Efficiency**: {'🟢 Excellent' if stats['hit_rate_percent'] > 80 else '🟡 Good' if stats['hit_rate_percent'] > 60 else '🔴 Needs Optimization'}",
+                f"- **Memory Efficiency**: {'🟢 Optimal' if stats['total_entries'] < stats['max_entries'] * 0.8 else '🟡 High Usage'}",
+                f"- **Total Requests**: {total_requests:,}",
+                ""
+            ])
+            
+            if stats['hit_rate_percent'] < 60:
+                lines.extend([
+                    "### ⚠️ Optimization Recommendations",
+                    "- Consider increasing cache TTL values",
+                    "- Review caching strategy for frequently accessed data",
+                    "- Monitor for cache invalidation patterns",
+                    ""
+                ])
+        
+        log_mcp_event("cache_stats", "SUCCESS", f"Cache stats retrieved - Hit rate: {stats['hit_rate_percent']:.2f}%")
+        return "\n".join(lines)
+        
+    except Exception as e:
+        error_msg = f"Failed to get cache statistics: {str(e)}"
+        log_mcp_event("cache_stats", "ERROR", error_msg, "ERROR")
+        return f"**Error**: {error_msg}"
+
+
+@mcp.tool()
+def cache_stats(random_string: str = "dummy") -> str:
+    """
+    Get cache performance statistics and optimization insights.
+    
+    Essential for monitoring cache hit rates and system efficiency.
+    
+    Args:
+        random_string: Dummy parameter for no-parameter tools
+        
+    Returns:
+        Detailed cache statistics including hit rates, memory usage, and category breakdown
+    """
+    return _cache_stats()
+
+
+def _performance_stats() -> str:
+    """Core performance statistics logic"""
+    try:
+        log_mcp_event("performance_stats", "START", "Getting system performance statistics")
+        
+        # Get performance stats
+        perf_stats = get_performance_stats()
+        
+        # Get connection pool stats
+        pool = get_pool()
+        pool_stats = pool.get_pool_stats()
+        
+        # Get cache stats for performance context
+        cache_stats = get_cache_stats()
+        
+        # Get error handler stats
+        error_handler = get_error_handler()
+        error_stats = error_handler.get_stats()
+        
+        lines = [
+            "# 📊 System Performance Dashboard",
+            "",
+            "## System Overview",
+            f"- **Uptime**: {perf_stats['uptime_seconds']:.1f} seconds",
+            f"- **Total Operations**: {perf_stats['total_operations']:,}",
+            f"- **Operations/Second**: {perf_stats['operations_per_second']:.2f}",
+            "",
+        ]
+        
+        # Connection Pool Performance
+        lines.extend([
+            "## 🔌 Connection Pool Status",
+            f"- **Pool Utilization**: {pool_stats['pool_utilization_percent']:.1f}%",
+            f"- **Active Connections**: {pool_stats['active_connections']}/{pool_stats['max_connections']}",
+            f"- **Available Connections**: {pool_stats['available_connections']}",
+            f"- **Health Check Cache**: {pool_stats['health_check_interval_seconds']}s TTL",
+            "",
+        ])
+        
+        # Cache Performance Summary
+        cache_hit_rate = cache_stats.get('hit_rate_percent', 0)
+        lines.extend([
+            "## 🚀 Cache Performance",
+            f"- **Hit Rate**: {cache_hit_rate:.2f}%",
+            f"- **Cached Entries**: {cache_stats.get('total_entries', 0):,}",
+            f"- **Memory Usage**: {cache_stats.get('memory_usage_estimate', 'Unknown')}",
+            "",
+        ])
+        
+        # Operation Performance
+        if 'operation_stats' in perf_stats and perf_stats['operation_stats']:
+            lines.extend([
+                "## ⚡ Operation Performance",
+                "",
+                "| Operation | Calls | Success Rate | Avg Duration (ms) |",
+                "|-----------|-------|--------------|-------------------|"
+            ])
+            
+            for op, stats in perf_stats['operation_stats'].items():
+                success_rate = (stats['successful_calls'] / stats['total_calls'] * 100) if stats['total_calls'] > 0 else 0
+                avg_duration = stats['total_duration_ms'] / stats['total_calls'] if stats['total_calls'] > 0 else 0
+                
+                lines.append(f"| {op} | {stats['total_calls']:,} | {success_rate:.1f}% | {avg_duration:.1f} |")
+            
+            lines.append("")
+        
+        # Circuit Breaker Status
+        if error_stats['circuit_breakers']:
+            lines.extend([
+                "## 🔄 Circuit Breaker Status",
+                "",
+                "| Operation | State | Failures | Can Execute |",
+                "|-----------|-------|----------|-------------|"
+            ])
+            
+            for cb_name, cb_stats in error_stats['circuit_breakers'].items():
+                state_emoji = {
+                    'closed': '🟢',
+                    'open': '🔴', 
+                    'half_open': '🟡'
+                }.get(cb_stats['state'], '⚪')
+                
+                lines.append(f"| {cb_name} | {state_emoji} {cb_stats['state']} | {cb_stats['failure_count']} | {'✅' if cb_stats['can_execute'] else '❌'} |")
+            
+            lines.append("")
+        
+        # Health Assessment
+        lines.extend([
+            "## 🏥 System Health Assessment",
+            ""
+        ])
+        
+        # Overall health scoring
+        health_score = 100
+        issues = []
+        
+        if cache_hit_rate < 60:
+            health_score -= 20
+            issues.append("Low cache hit rate")
+            
+        if pool_stats['pool_utilization_percent'] > 90:
+            health_score -= 15
+            issues.append("High connection pool utilization")
+            
+        # Check for any open circuit breakers
+        open_circuits = [name for name, stats in error_stats['circuit_breakers'].items() if stats['state'] == 'open']
+        if open_circuits:
+            health_score -= 30
+            issues.append(f"Open circuit breakers: {', '.join(open_circuits)}")
+            
+        # Check operation error rates
+        high_error_ops = []
+        if 'operation_stats' in perf_stats:
+            for op, stats in perf_stats['operation_stats'].items():
+                if stats['total_calls'] > 10:  # Only check ops with significant calls
+                    error_rate = (stats['failed_calls'] / stats['total_calls'] * 100) if stats['total_calls'] > 0 else 0
+                    if error_rate > 10:  # More than 10% error rate
+                        high_error_ops.append(f"{op} ({error_rate:.1f}%)")
+        
+        if high_error_ops:
+            health_score -= 25
+            issues.append(f"High error rates: {', '.join(high_error_ops)}")
+        
+        health_score = max(0, health_score)
+        
+        if health_score >= 90:
+            health_status = "🟢 Excellent"
+        elif health_score >= 70:
+            health_status = "🟡 Good"
+        elif health_score >= 50:
+            health_status = "🟠 Fair"
+        else:
+            health_status = "🔴 Poor"
+            
+        lines.append(f"- **Overall Health**: {health_status} ({health_score}/100)")
+        
+        if issues:
+            lines.extend([
+                "- **Issues Detected**:",
+                *[f"  - {issue}" for issue in issues]
+            ])
+        else:
+            lines.append("- **Status**: All systems operating normally")
+            
+        lines.append("")
+        
+        log_mcp_event("performance_stats", "SUCCESS", f"Performance stats retrieved - Health: {health_score}/100, Operations: {perf_stats['total_operations']}")
+        return "\n".join(lines)
+        
+    except Exception as e:
+        error_msg = f"Failed to get performance statistics: {str(e)}"
+        log_mcp_event("performance_stats", "ERROR", error_msg, "ERROR")
+        return f"**Error**: {error_msg}"
+
+
+@mcp.tool()
+def performance_stats(random_string: str = "dummy") -> str:
+    """
+    Get comprehensive system performance statistics and health metrics.
+    
+    Critical for monitoring system performance, identifying bottlenecks, and optimization.
+    
+    Args:
+        random_string: Dummy parameter for no-parameter tools
+        
+    Returns:
+        Detailed performance metrics including operation times, error rates, and system health
+    """
+    return _performance_stats()
 
 
 def run_server():
