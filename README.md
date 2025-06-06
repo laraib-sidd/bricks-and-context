@@ -86,26 +86,25 @@ graph TB
 
 2. **Install dependencies**
    ```bash
-   cd local
    pip install -r requirements.txt
    ```
 
 3. **Configure environment**
    ```bash
-   cp .env.example .env
+   cp env.template .env
    # Edit .env with your Databricks credentials
    ```
 
 4. **Run the MCP server**
    ```bash
-   python main.py
+   python -m src.mcp_server
    ```
 
 ## Configuration
 
 ### Environment Variables
 
-Create a `.env` file in the `local/` directory with the following variables:
+Create a `.env` file in the project root with the following variables:
 
 ```bash
 # Databricks Connection Settings
@@ -232,14 +231,19 @@ def monitor_critical_jobs():
 ### Project Structure
 ```
 bricks-and-context/
-├── local/
-│   ├── main.py              # MCP server implementation
-│   ├── test_connection.py   # Connection testing utilities
-│   ├── requirements.txt     # Python dependencies
-│   └── README.md           # Local development documentation
-├── CHANGELOG.md            # Project change history
-├── PROJECT_STATUS.md       # Current development status
-└── README.md              # This file
+├── src/
+│   └── mcp_server/
+│       ├── __init__.py      # Package initialization
+│       └── connection_pool.py # Database connection pooling
+├── tests/
+│   ├── __init__.py         # Test package
+│   └── test_connection_pool.py # Connection pool tests
+├── requirements.txt        # Python dependencies
+├── env.template           # Environment configuration template
+├── test_pool_basic.py     # Basic connection pool testing
+├── CHANGELOG.md           # Project change history
+├── PROJECT_STATUS.md      # Current development status
+└── README.md             # This file
 ```
 
 ### Contributing
