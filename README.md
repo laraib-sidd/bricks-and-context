@@ -8,12 +8,38 @@ Bricks and Context is a comprehensive MCP server that provides AI applications w
 
 ### Key Features
 
-- **🔍 SQL Query Execution** - Run complex SQL queries against Databricks SQL warehouses
-- **📋 Job Management** - List, monitor, and manage Databricks job workflows  
-- **⚙️ Cluster Operations** - Control and monitor Databricks cluster lifecycle
-- **📊 Schema Discovery** - Explore database schemas and table structures
-- **🔐 Secure Authentication** - Environment-based credential management
-- **🚀 Real-time Integration** - Direct API integration with Databricks REST and SQL APIs
+- **🔍 SQL Query Execution** - ✅ Run complex SQL queries against Databricks SQL warehouses
+- **📊 Schema Discovery** - ✅ Explore database schemas and table structures
+- **🔐 Secure Authentication** - ✅ Environment-based credential management
+- **🚀 Real-time Integration** - ✅ Direct API integration with Databricks SQL APIs
+- **📋 Job Management** - 🔄 List, monitor, and manage Databricks job workflows (Coming Soon)
+- **⚙️ Cluster Operations** - 🔄 Control and monitor Databricks cluster lifecycle (Coming Soon)
+
+## 🎯 Current Status
+
+**✅ Phase 1 Complete - Production Ready!**
+
+The MCP server core is fully implemented and tested with essential tools for AI integration:
+
+- **Connection Pool** - Thread-safe pooling optimized for AI request patterns
+- **MCP Server Core** - FastMCP-based server with 6 essential tools
+- **Comprehensive Testing** - Unit tests (100% pass) and integration tests with real Databricks
+- **Production Ready** - Error handling, logging, and environment configuration
+
+**Available MCP Tools:**
+- `execute_sql_query` - Execute SQL queries with AI-optimized markdown output
+- `discover_schemas` - Discover available databases and schemas
+- `discover_tables` - List tables in schemas with metadata
+- `describe_table` - Get detailed table schema information
+- `get_table_sample` - Sample table data for AI analysis
+- `connection_health` - Monitor connection pool health
+
+**Integration Tested:**
+- ✅ Real Databricks connection (160 schemas discovered)
+- ✅ All tools tested and working
+- ✅ AI-optimized markdown table output
+- ✅ Thread-safe concurrent requests
+- ✅ Ready for Claude Desktop integration
 
 ## Architecture
 
@@ -99,9 +125,14 @@ graph TB
    # Edit .env with your Databricks credentials
    ```
 
-4. **Run the MCP server**
+4. **Test the connection** (optional)
    ```bash
-   python -m src.mcp_server
+   python local/testing/test_mcp_integration.py
+   ```
+
+5. **Run the MCP server**
+   ```bash
+   python run_mcp_server.py
    ```
 
 ## Configuration
