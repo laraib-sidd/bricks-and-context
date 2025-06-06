@@ -17,17 +17,17 @@ Environment Variables:
 """
 
 from src.mcp_server.mcp_server import run_server
+from src.mcp_server.logger import log_server_event, logger
 
 if __name__ == "__main__":
-    print("🚀 Starting Bricks and Context MCP Server...")
-    print("📡 Using stdio transport for AI client connections")
-    print("🔗 Connecting to Databricks with connection pooling")
-    print()
+    log_server_event("START", "Initializing Bricks and Context MCP Server")
+    log_server_event("TRANSPORT", "Using stdio transport for AI client connections")
+    log_server_event("CONNECTION", "Preparing Databricks connection pool")
     
     try:
         run_server()
     except KeyboardInterrupt:
-        print("\n\n⏹️  MCP Server stopped by user")
+        log_server_event("STOP", "MCP Server stopped by user", "INFO")
     except Exception as e:
-        print(f"\n\n❌ MCP Server failed to start: {e}")
-        print("🔧 Check your environment variables and Databricks connection") 
+        log_server_event("ERROR", f"MCP Server failed to start: {e}", "ERROR")
+        logger.error("Check your environment variables and Databricks connection") 
