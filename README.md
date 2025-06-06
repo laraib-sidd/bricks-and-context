@@ -86,7 +86,11 @@ graph TB
 
 2. **Install dependencies**
    ```bash
-   pip install -r requirements.txt
+   # Using uv (recommended - modern Python package manager)
+   uv sync --dev
+   
+   # Or using pip
+   pip install -e ".[dev]"
    ```
 
 3. **Configure environment**
@@ -238,7 +242,7 @@ bricks-and-context/
 ├── tests/
 │   ├── __init__.py         # Test package
 │   └── test_connection_pool.py # Connection pool tests
-├── requirements.txt        # Python dependencies
+├── pyproject.toml         # Python project configuration and dependencies
 ├── env.template           # Environment configuration template
 ├── test_pool_basic.py     # Basic connection pool testing
 ├── CHANGELOG.md           # Project change history
