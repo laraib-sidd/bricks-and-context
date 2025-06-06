@@ -85,6 +85,7 @@ dependencies = [
     { name = "databricks-sql-connector" },
     { name = "fastmcp" },
     { name = "python-dotenv" },
+    { name = "requests" },
 ]
 
 [package.optional-dependencies]
@@ -112,6 +113,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "python-dotenv", specifier = ">=1.0.0,<2.0.0" },
+    { name = "requests", specifier = ">=2.25.0,<3.0.0" },
 ]
 provides-extras = ["dev"]
 
