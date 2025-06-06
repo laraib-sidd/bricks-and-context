@@ -193,6 +193,10 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Internal development tracking (keep private)
+CHANGELOG.md
+PROJECT_STATUS.md
+
 local
 
 .cursor
