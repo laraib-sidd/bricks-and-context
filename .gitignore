@@ -195,7 +195,8 @@ cython_debug/
 
 # Internal development tracking (keep private)
 CHANGELOG.md
-PROJECT_STATUS.md
+
+# Note: PROJECT_STATUS.md is now public to help contributors understand project maturity
 
 local
 
