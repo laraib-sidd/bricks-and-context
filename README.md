@@ -1,320 +1,302 @@
 # Bricks and Context
 
-**A Model Context Protocol (MCP) server that enables AI solutions to seamlessly communicate with Databricks**
+<p align="center">
+  <strong>A production-grade Model Context Protocol (MCP) server for Databricks</strong>
+</p>
+
+<p align="center">
+  <em>SQL Warehouses · Jobs API · Multi-Workspace · Built for AI Workloads</em>
+</p>
+
+---
 
 ## Overview
 
-Bricks and Context is a comprehensive MCP server that provides AI applications with native access to Databricks functionality. It enables AI assistants, chatbots, and other AI-powered tools to execute SQL queries, manage Databricks jobs, control clusters, and access real-time data insights directly from Databricks workspaces.
+**Bricks and Context** enables MCP clients (Cursor, Claude Desktop, etc.) to interact with Databricks through a robust, AI-optimized interface. It provides:
 
-### Key Features
+- **SQL Warehouse access** — Query execution, schema discovery, table sampling
+- **Jobs API integration** — List, trigger, monitor, and cancel Databricks jobs
+- **Multi-workspace support** — Switch between dev/staging/prod with a single parameter
+- **Production reliability** — Connection pooling, retries, circuit breakers, bounded outputs
 
-- **🔍 SQL Query Execution** - ✅ Run complex SQL queries against Databricks SQL warehouses
-- **📊 Schema Discovery** - ✅ Explore database schemas and table structures
-- **🔐 Secure Authentication** - ✅ Environment-based credential management
-- **🚀 Real-time Integration** - ✅ Direct API integration with Databricks SQL APIs
-- **📋 Job Management** - 🔄 List, monitor, and manage Databricks job workflows (Coming Soon)
-- **⚙️ Cluster Operations** - 🔄 Control and monitor Databricks cluster lifecycle (Coming Soon)
+## Features
 
-## 🎯 Current Status
+### 🔌 SQL & Schema Discovery
 
-**✅ Phase 1 Complete - Production Ready!**
+| Tool | Description |
+|------|-------------|
+| `execute_sql_query` | Run SQL with bounded, AI-safe output (rows/bytes limits) |
+| `discover_schemas` | List all schemas in the workspace |
+| `discover_tables` | List tables in a schema with metadata |
+| `describe_table` | Get column types, nullability, and structure |
+| `get_table_sample` | Preview rows for data exploration |
+| `connection_health` | Verify Databricks connectivity |
 
-The MCP server core is fully implemented and tested with essential tools for AI integration:
+### ⚙️ Jobs Management
 
-- **Connection Pool** - Thread-safe pooling optimized for AI request patterns
-- **MCP Server Core** - FastMCP-based server with 6 essential tools
-- **Comprehensive Testing** - Unit tests (100% pass) and integration tests with real Databricks
-- **Production Ready** - Error handling, logging, and environment configuration
+| Tool | Description |
+|------|-------------|
+| `list_jobs` | List jobs with optional name filtering |
+| `get_job_details` | Full job config: schedule, cluster, tasks |
+| `get_job_runs` | Run history with state and duration |
+| `trigger_job` | Start a job with optional parameters |
+| `cancel_job_run` | Stop a running job |
+| `get_job_run_output` | Retrieve logs, errors, notebook output |
 
-**Available MCP Tools:**
-- `execute_sql_query` - Execute SQL queries with AI-optimized markdown output
-- `discover_schemas` - Discover available databases and schemas
-- `discover_tables` - List tables in schemas with metadata
-- `describe_table` - Get detailed table schema information
-- `get_table_sample` - Sample table data for AI analysis
-- `connection_health` - Monitor connection pool health
+### 🌐 Multi-Workspace
 
-**Integration Tested:**
-- ✅ Real Databricks connection (160 schemas discovered)
-- ✅ All tools tested and working
-- ✅ AI-optimized markdown table output
-- ✅ Thread-safe concurrent requests
-- ✅ Ready for Claude Desktop integration
+Configure multiple Databricks workspaces in `auth.yaml` and select per-call:
 
-## Architecture
-
-```mermaid
-graph TB
-    subgraph "AI Solutions"
-        A[AI Assistants]
-        B[Chatbots] 
-        C[Analysis Tools]
-        D[Custom Applications]
-    end
-    
-    subgraph "MCP Server"
-        E[FastMCP Server]
-        F[Request Router]
-        G[Authentication]
-    end
-    
-    subgraph "Service Layer"
-        H[SQL Service]
-        I[Jobs Service]
-        J[Clusters Service]
-        K[Schema Service]
-    end
-    
-    subgraph "Databricks"
-        L[SQL Warehouse]
-        M[Jobs API]
-        N[Clusters API]
-        O[REST API]
-    end
-    
-    A --> E
-    B --> E
-    C --> E
-    D --> E
-    
-    E --> F
-    F --> G
-    F --> H
-    F --> I
-    F --> J
-    F --> K
-    
-    H --> L
-    I --> M
-    J --> N
-    K --> O
-    
-    style E fill:#e8f5e8
-    style F fill:#e8f5e8
+```python
+execute_sql_query(sql="SELECT 1", workspace="prod")
+list_jobs(limit=10, workspace="dev")
 ```
+
+If `workspace` is omitted, the server uses `default_workspace` from your config.
+
+### 🛡️ Production Reliability
+
+- **Bounded SQL output** — Configurable row/byte/cell limits prevent OOM and huge responses
+- **Connection pooling** — Thread-safe pool with per-connection health validation
+- **Retry logic** — Exponential backoff with jitter for transient failures
+- **Circuit breakers** — Automatic fault isolation for cascading failure prevention
+- **Query caching** — Optional TTL-based caching for repeated queries
+
+### 📊 Observability
+
+| Tool | Description |
+|------|-------------|
+| `cache_stats` | Hit rates, memory usage, category breakdown |
+| `performance_stats` | Operation latencies, error rates, system health |
+
+---
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.11+
-- Databricks workspace access
-- Databricks SQL warehouse configured
-- Personal access token or service principal credentials
+- Python 3.10+
+- Databricks workspace with a SQL Warehouse
+- Personal Access Token (PAT) or service principal token
 
 ### Installation
 
-1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-org/bricks-and-context.git
+git clone https://github.com/laraib-sidd/bricks-and-context.git
    cd bricks-and-context
-   ```
 
-2. **Install dependencies**
-   ```bash
-   # Using uv (recommended - modern Python package manager)
-   uv sync --dev
+# Using uv (recommended)
+uv sync
    
    # Or using pip
-   pip install -e ".[dev]"
+pip install -e .
    ```
 
-3. **Configure environment**
+### Configuration
+
+1. **Create `auth.yaml`** (contains secrets — not committed):
+
    ```bash
-   cp env.template .env
-   # Edit .env with your Databricks credentials
-   ```
+cp auth.template.yaml auth.yaml
+```
 
-4. **Test the connection** (optional)
-   ```bash
-   python local/testing/test_mcp_integration.py
-   ```
+Edit `auth.yaml` with your workspace credentials:
 
-5. **Run the MCP server**
+```yaml
+default_workspace: dev
+
+workspaces:
+  - name: dev
+    host: your-dev.cloud.databricks.com
+    token: dapi...
+    http_path: /sql/1.0/warehouses/...
+
+  - name: prod
+    host: your-prod.cloud.databricks.com
+    token: dapi...
+    http_path: /sql/1.0/warehouses/...
+```
+
+2. **Review `config.json`** (committed — tunable settings):
+
+```json
+{
+  "max_connections": 10,
+  "max_result_rows": 200,
+  "max_result_bytes": 262144,
+  "allow_write_queries": false,
+  "enable_sql_retries": true
+}
+```
+
+### Run Locally
+
    ```bash
    python run_mcp_server.py
    ```
 
-## Configuration
+---
 
-### Environment Variables
+## Cursor Setup
 
-Create a `.env` file in the project root with the following variables:
+This MCP server uses **stdio transport**. Cursor doesn't inherit your shell environment, so you must provide explicit paths and environment variables.
+
+### Step 1: Install Dependencies
 
 ```bash
-# Databricks Connection Settings
-DATABRICKS_HOST=your-workspace.cloud.databricks.com
-DATABRICKS_TOKEN=dapi1234567890abcdef...
-DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/abc123def456
-
-# Optional: Server Configuration
-MCP_SERVER_HOST=localhost
-MCP_SERVER_PORT=8000
-LOG_LEVEL=INFO
+cd /path/to/bricks-and-context
+uv sync   # creates .venv/ with all dependencies
 ```
 
-### Obtaining Databricks Credentials
+### Step 2: Open MCP Settings
 
-1. **Databricks Host**: Your workspace URL (without `https://`)
-2. **Access Token**: Generate from Databricks workspace → User Settings → Access Tokens
-3. **HTTP Path**: Find in SQL Warehouse → Connection Details → HTTP Path
+1. Open Cursor
+2. Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows/Linux)
+3. Type **"Open MCP Settings"** and select it
+4. This opens `~/.cursor/mcp.json`
 
-## Available MCP Tools
+### Step 3: Add Server Configuration
 
-### SQL Operations
+Replace `/path/to/bricks-and-context` with your actual path.
 
-#### `run_sql_query`
-Execute SQL queries against your Databricks SQL warehouse.
+**Option A: Using `uv run` (recommended)**
 
-```python
-# Example usage in AI applications
-result = mcp_client.call_tool("run_sql_query", {
-    "sql": "SELECT COUNT(*) as total_orders FROM sales_data WHERE date >= '2024-01-01'"
-})
+```json
+{
+  "mcpServers": {
+    "databricks": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/bricks-and-context",
+        "run",
+        "python",
+        "run_mcp_server.py"
+      ],
+      "env": {
+        "MCP_AUTH_PATH": "/path/to/bricks-and-context/auth.yaml",
+        "MCP_CONFIG_PATH": "/path/to/bricks-and-context/config.json"
+      }
+    }
+  }
+}
 ```
 
-#### `get_schema`
-Discover available tables and their schemas.
+**Option B: Using venv Python directly**
 
-```python
-schema = mcp_client.call_tool("get_schema")
-# Returns formatted table listing with database, schema, and table names
+```json
+{
+  "mcpServers": {
+    "databricks": {
+      "command": "/path/to/bricks-and-context/.venv/bin/python",
+      "args": ["/path/to/bricks-and-context/run_mcp_server.py"],
+      "env": {
+        "MCP_AUTH_PATH": "/path/to/bricks-and-context/auth.yaml",
+        "MCP_CONFIG_PATH": "/path/to/bricks-and-context/config.json"
+      }
+    }
+  }
+}
 ```
 
-### Job Management
+> **Windows**: Use `.venv\Scripts\python.exe` instead of `.venv/bin/python`.
 
-#### `list_jobs`
-Get all Databricks jobs with their current status.
+### Step 4: Restart Cursor
 
-```python
-jobs = mcp_client.call_tool("list_jobs")
-# Returns table with Job ID, Name, and Created By
-```
+Restart Cursor (or reload the window) to load the MCP server.
 
-#### `get_job_status`
-Monitor specific job execution status and history.
+### Verify
 
-```python
-status = mcp_client.call_tool("get_job_status", {"job_id": 123})
-# Returns detailed run history with timing and status
-```
-
-#### `get_job_details`
-Get comprehensive information about a specific job.
-
-```python
-details = mcp_client.call_tool("get_job_details", {"job_id": 123})
-# Returns job configuration, tasks, and metadata
-```
-
-## MCP Resources
-
-### `schema://tables`
-Provides a live resource containing all available tables in your Databricks workspace, automatically updated and accessible to AI applications for context-aware query generation.
-
-## Use Cases for AI Applications
-
-### 1. **Intelligent Data Analysis**
-AI assistants can query real-time data, analyze trends, and provide insights by executing complex SQL queries based on natural language requests.
-
-### 2. **Job Monitoring and Alerting**  
-AI systems can monitor Databricks job health, detect failures, and provide intelligent recommendations for optimization.
-
-### 3. **Dynamic Schema Discovery**
-AI applications can explore available data sources and automatically generate appropriate queries based on schema information.
-
-### 4. **Automated Reporting**
-Generate real-time reports and dashboards by allowing AI to query current data and format results appropriately.
-
-## Integration Examples
-
-### With Claude/ChatGPT
-```python
-# AI can now execute: "Show me sales trends for the last quarter"
-# Which translates to:
-mcp_client.call_tool("run_sql_query", {
-    "sql": "SELECT DATE_TRUNC('month', order_date) as month, SUM(revenue) as total_revenue FROM sales WHERE order_date >= CURRENT_DATE - INTERVAL 3 MONTHS GROUP BY month ORDER BY month"
-})
-```
-
-### With Custom AI Applications
-```python
-import mcp_client
-
-# Initialize MCP connection
-client = mcp_client.connect("http://localhost:8000")
-
-# AI-driven job monitoring
-def monitor_critical_jobs():
-    jobs = client.call_tool("list_jobs")
-    for job in parse_jobs(jobs):
-        if job.is_critical:
-            status = client.call_tool("get_job_status", {"job_id": job.id})
-            if detect_issues(status):
-                alert_system.notify(f"Job {job.name} needs attention")
-```
-
-## Security Considerations
-
-- **Credential Management**: Never commit credentials to version control
-- **Access Control**: Use least-privilege access tokens
-- **Network Security**: Deploy behind secure networks in production
-- **Audit Logging**: All queries and operations are logged for compliance
-
-## Development
-
-### Project Structure
-```
-bricks-and-context/
-├── src/
-│   └── mcp_server/
-│       ├── __init__.py      # Package initialization
-│       └── connection_pool.py # Database connection pooling
-├── tests/
-│   ├── __init__.py         # Test package
-│   └── test_connection_pool.py # Connection pool tests
-├── pyproject.toml         # Python project configuration and dependencies
-├── env.template           # Environment configuration template
-├── test_pool_basic.py     # Basic connection pool testing
-├── CHANGELOG.md           # Project change history
-├── PROJECT_STATUS.md      # Current development status
-└── README.md             # This file
-```
-
-### Contributing
-
-1. Follow the established development standards
-2. All changes must update CHANGELOG.md
-3. Create feature branches for all changes
-4. Ensure comprehensive testing before submitting PRs
-
-## Roadmap
-
-### Near-term (Q1 2024)
-- **Cluster Management** - Start/stop/scale Databricks clusters
-- **Streaming Support** - Real-time data processing capabilities
-- **Enhanced Error Handling** - Comprehensive error management and retry logic
-
-### Medium-term (Q2-Q3 2024)
-- **ML Integration** - Model deployment and experiment tracking
-- **Multi-workspace Support** - Connect to multiple Databricks environments
-- **Advanced Analytics** - Complex data processing and visualization
-
-### Long-term (Q4 2024+)
-- **AI-Native Features** - Built-in AI/ML model serving
-- **Enterprise Security** - Advanced authentication and authorization
-- **Global Distribution** - Multi-region deployment capabilities
-
-## Support
-
-- **Documentation**: Comprehensive API docs and examples
-- **Issues**: Report issues via GitHub Issues
-- **Community**: Join our discussions for questions and feedback
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Ask the AI:
+- *"List my Databricks jobs"*
+- *"Run SELECT 1 on Databricks"*
+- *"Describe the table catalog.schema.table_name"*
 
 ---
 
-**Empower your AI applications with native Databricks integration through MCP**
+## Configuration Reference
+
+### `auth.yaml` (secrets — gitignored)
+
+```yaml
+default_workspace: dev   # Used when workspace param is omitted
+
+workspaces:
+  - name: dev
+    host: your-workspace.cloud.databricks.com
+    token: dapi...
+    http_path: /sql/1.0/warehouses/...
+```
+
+### `config.json` (project settings — committed)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `max_connections` | 10 | Connection pool size |
+| `health_check_cache_ttl` | 300 | Health check cache (seconds) |
+| `max_result_rows` | 200 | Max rows per query |
+| `max_result_bytes` | 262144 | Max response size (bytes) |
+| `max_cell_chars` | 200 | Max chars per cell |
+| `allow_write_queries` | false | Enable INSERT/UPDATE/DELETE |
+| `enable_sql_retries` | true | Retry transient SQL failures |
+| `enable_query_cache` | false | Cache identical queries |
+| `query_cache_ttl_seconds` | 300 | Query cache TTL |
+| `databricks_api_timeout_seconds` | 30 | Jobs API timeout |
+
+### Environment Variable Overrides
+
+Any setting can be overridden via environment variable (uppercase, e.g., `MAX_RESULT_ROWS=500`).
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        MCP Client (Cursor/Claude)               │
+└─────────────────────────────────────────────────────────────────┘
+                                  │ stdio
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      FastMCP Server (mcp_server.py)             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │ SQL Tools   │  │ Job Tools   │  │ Observability Tools     │  │
+│  └──────┬──────┘  └──────┬──────┘  └───────────┬─────────────┘  │
+└─────────┼────────────────┼─────────────────────┼────────────────┘
+          │                │                     │
+          ▼                ▼                     ▼
+┌──────────────────┐ ┌──────────────────┐ ┌──────────────────────┐
+│ Connection Pool  │ │  Job Manager     │ │ Cache / Performance  │
+│  (SQL Connector) │ │  (REST API 2.1)  │ │      Monitors        │
+└────────┬─────────┘ └────────┬─────────┘ └──────────────────────┘
+         │                    │
+         ▼                    ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Databricks Workspace(s)                     │
+│              SQL Warehouse          Jobs Service                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Development
+
+```bash
+# Install dev dependencies
+uv sync --dev
+
+# Run tests
+pytest
+
+# Format code
+black src/ tests/
+
+# Type check
+mypy src/
+```
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE)

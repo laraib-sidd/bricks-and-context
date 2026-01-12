@@ -14,7 +14,9 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from .logger import log_databricks_event, logger
+from .config import get_setting_int
 from .error_handler import with_databricks_retry
+from .workspaces import get_workspace_config, resolve_workspace_name
 
 import requests
 
@@ -60,10 +62,11 @@ class DatabricksJobManager:
     - Retrieve job outputs and logs
     """
     
-    def __init__(self):
+    def __init__(self, *, host: str, token: str, workspace_name: str = "default"):
         """Initialize the job manager with Databricks connection details."""
-        self.host = os.getenv("DATABRICKS_HOST")
-        self.token = os.getenv("DATABRICKS_TOKEN")
+        self.workspace_name = workspace_name
+        self.host = host
+        self.token = token
         
         if not self.host or not self.token:
             raise ValueError("DATABRICKS_HOST and DATABRICKS_TOKEN must be set")
@@ -80,9 +83,9 @@ class DatabricksJobManager:
             "Content-Type": "application/json"
         }
         self._session = requests.Session()
-        self._timeout_seconds = int(os.getenv("DATABRICKS_API_TIMEOUT_SECONDS", "30"))
+        self._timeout_seconds = get_setting_int("DATABRICKS_API_TIMEOUT_SECONDS", "databricks_api_timeout_seconds", 30)
         
-        log_databricks_event("JOBS", "INIT", f"Job manager initialized for {self.host}")
+        log_databricks_event("JOBS", "INIT", f"[{self.workspace_name}] Job manager initialized for {self.host}")
     
     @with_databricks_retry("databricks_jobs_api_request")
     def _make_request(
@@ -553,11 +556,29 @@ class DatabricksJobManager:
 
 
 # Global job manager instance
-job_manager = None
+_job_managers: Dict[str, DatabricksJobManager] = {}
+_job_lock = None
 
-def get_job_manager() -> DatabricksJobManager:
-    """Get or create the global job manager instance."""
-    global job_manager
-    if job_manager is None:
-        job_manager = DatabricksJobManager()
-    return job_manager 
+def get_job_manager(workspace: Optional[str] = None) -> DatabricksJobManager:
+    """Get or create a per-workspace job manager instance."""
+    global _job_lock
+    if _job_lock is None:
+        import threading
+
+        _job_lock = threading.Lock()
+
+    workspace_name = resolve_workspace_name(workspace)
+    if workspace_name in _job_managers:
+        return _job_managers[workspace_name]
+
+    with _job_lock:
+        if workspace_name in _job_managers:
+            return _job_managers[workspace_name]
+
+        cfg = get_workspace_config(workspace_name)
+        _job_managers[workspace_name] = DatabricksJobManager(
+            host=cfg.host,
+            token=cfg.token,
+            workspace_name=workspace_name,
+        )
+        return _job_managers[workspace_name]

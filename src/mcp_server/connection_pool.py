@@ -17,6 +17,8 @@ from .logger import log_databricks_event, logger
 from .cache_manager import cache_health_status, get_cached_health_status, get_cache_manager
 from .performance_monitor import get_performance_monitor, record_operation
 from .error_handler import with_databricks_retry
+from .config import get_setting_int
+from .workspaces import get_workspace_config, resolve_workspace_name
 
 # Load environment variables from .env file
 load_dotenv()
@@ -33,7 +35,16 @@ class ConnectionPool:
     - Connection validation and automatic recovery
     """
 
-    def __init__(self, max_connections: int = 10, health_check_interval: int = 300):
+    def __init__(
+        self,
+        *,
+        host: str,
+        token: str,
+        http_path: str,
+        max_connections: int = 10,
+        health_check_interval: int = 300,
+        workspace_name: str = "default",
+    ):
         """
         Initialize connection pool.
         
@@ -56,14 +67,18 @@ class ConnectionPool:
         self._cache = get_cache_manager()
 
         # Databricks connection config
-        self.host = os.getenv("DATABRICKS_HOST")
-        self.token = os.getenv("DATABRICKS_TOKEN")
-        self.http_path = os.getenv("DATABRICKS_HTTP_PATH")
-
+        self.workspace_name = workspace_name
+        self.host = host
+        self.token = token
+        self.http_path = http_path
         if not all([self.host, self.token, self.http_path]):
             raise ValueError("Missing required Databricks credentials in environment")
         
-        log_databricks_event("CONNECTION_POOL", "INIT", f"Pool initialized with {max_connections} max connections")
+        log_databricks_event(
+            "CONNECTION_POOL",
+            "INIT",
+            f"[{self.workspace_name}] Pool initialized with {max_connections} max connections",
+        )
 
     @with_databricks_retry("create_connection")
     def _create_connection(self) -> Connection:
@@ -305,22 +320,32 @@ class ConnectionPool:
 
 
 # Global connection pool instance
-_connection_pool: Optional[ConnectionPool] = None
+_connection_pools: Dict[str, ConnectionPool] = {}
 _pool_lock = threading.Lock()
 
 
-def get_pool() -> ConnectionPool:
-    """Get the global connection pool instance."""
-    global _connection_pool
-    
-    if _connection_pool is None:
-        with _pool_lock:
-            if _connection_pool is None:
-                max_conn = int(os.getenv("MAX_CONNECTIONS", "10"))
-                health_interval = int(os.getenv("HEALTH_CHECK_CACHE_TTL", "300"))  # 5 minutes
-                _connection_pool = ConnectionPool(max_connections=max_conn, health_check_interval=health_interval)
-                
-    return _connection_pool
+def get_pool(workspace: Optional[str] = None) -> ConnectionPool:
+    """Get a per-workspace connection pool instance."""
+    workspace_name = resolve_workspace_name(workspace)
+    if workspace_name in _connection_pools:
+        return _connection_pools[workspace_name]
+
+    with _pool_lock:
+        if workspace_name in _connection_pools:
+            return _connection_pools[workspace_name]
+
+        cfg = get_workspace_config(workspace_name)
+        max_conn = get_setting_int("MAX_CONNECTIONS", "max_connections", 10)
+        health_interval = get_setting_int("HEALTH_CHECK_CACHE_TTL", "health_check_cache_ttl", 300)
+        _connection_pools[workspace_name] = ConnectionPool(
+            host=cfg.host,
+            token=cfg.token,
+            http_path=cfg.http_path,
+            max_connections=max_conn,
+            health_check_interval=health_interval,
+            workspace_name=workspace_name,
+        )
+        return _connection_pools[workspace_name]
 
 
 class PooledConnection:

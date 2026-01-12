@@ -45,8 +45,9 @@ def setup_logger(
         
     logger.setLevel(log_level)
     
-    # Create console handler
-    handler = logging.StreamHandler(sys.stdout)
+    # Create console handler - MUST use stderr for MCP stdio transport
+    # stdout is reserved for JSON-RPC protocol messages
+    handler = logging.StreamHandler(sys.stderr)
     handler.setLevel(log_level)
     
     # Configure formatter based on type

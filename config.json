@@ -1,0 +1,16 @@
+{
+  "max_connections": 10,
+  "health_check_cache_ttl": 300,
+
+  "allow_write_queries": false,
+  "max_result_rows": 200,
+  "max_result_bytes": 262144,
+  "max_cell_chars": 200,
+  "enable_sql_retries": true,
+
+  "enable_query_cache": false,
+  "query_cache_ttl_seconds": 300,
+
+  "databricks_api_timeout_seconds": 30
+}
+
