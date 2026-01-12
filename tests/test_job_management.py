@@ -55,14 +55,16 @@ class TestDatabricksJobManager:
         'DATABRICKS_HOST': 'test-workspace.cloud.databricks.com',
         'DATABRICKS_TOKEN': 'test-token'
     })
-    @patch('src.mcp_server.job_manager.requests.get')
+    @patch('src.mcp_server.job_manager.requests.Session')
     @patch('src.mcp_server.job_manager.log_databricks_event')
-    def test_list_jobs_success(self, mock_log, mock_get):
+    def test_list_jobs_success(self, mock_log, mock_session_cls):
         """Test successful job listing."""
-        # Mock API response
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
         mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
         mock_response.status_code = 200
+        mock_response.content = b"{}"
         mock_response.json.return_value = {
             "jobs": [
                 {
@@ -80,7 +82,7 @@ class TestDatabricksJobManager:
                 }
             ]
         }
-        mock_get.return_value = mock_response
+        mock_session.request.return_value = mock_response
         
         manager = DatabricksJobManager()
         jobs = manager.list_jobs(limit=10)
@@ -96,13 +98,16 @@ class TestDatabricksJobManager:
         'DATABRICKS_HOST': 'test-workspace.cloud.databricks.com',
         'DATABRICKS_TOKEN': 'test-token'
     })
-    @patch('src.mcp_server.job_manager.requests.get')
+    @patch('src.mcp_server.job_manager.requests.Session')
     @patch('src.mcp_server.job_manager.log_databricks_event')
-    def test_get_job_details_success(self, mock_log, mock_get):
+    def test_get_job_details_success(self, mock_log, mock_session_cls):
         """Test successful job details retrieval."""
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
         mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
         mock_response.status_code = 200
+        mock_response.content = b"{}"
         mock_response.json.return_value = {
             "job_id": 123,
             "settings": {
@@ -126,7 +131,7 @@ class TestDatabricksJobManager:
             "creator_user_name": "test@example.com",
             "created_time": 1640995200000
         }
-        mock_get.return_value = mock_response
+        mock_session.request.return_value = mock_response
         
         manager = DatabricksJobManager()
         details = manager.get_job_details(123)
@@ -138,52 +143,96 @@ class TestDatabricksJobManager:
         assert details["schedule"]["quartz_cron_expression"] == "0 0 12 * * ?"
         assert details["cluster_config"]["type"] == "new"
         assert details["task_config"]["notebook_path"] == "/test"
+
+    @patch.dict('os.environ', {
+        'DATABRICKS_HOST': 'test-workspace.cloud.databricks.com',
+        'DATABRICKS_TOKEN': 'test-token'
+    })
+    @patch('src.mcp_server.job_manager.requests.Session')
+    @patch('src.mcp_server.job_manager.log_databricks_event')
+    def test_get_job_details_multi_task(self, mock_log, mock_session_cls):
+        """Test multi-task job details parsing."""
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.content = b"{}"
+        mock_response.json.return_value = {
+            "job_id": 999,
+            "settings": {
+                "name": "Multi Task Job",
+                "tasks": [
+                    {"task_key": "t1", "notebook_task": {"notebook_path": "/nb1"}},
+                    {"task_key": "t2", "spark_python_task": {"python_file": "s3://x.py"}},
+                ],
+                "job_clusters": [{"job_cluster_key": "jc1", "new_cluster": {"node_type_id": "i3.xlarge"}}],
+            },
+            "creator_user_name": "test@example.com",
+            "created_time": 1640995200000
+        }
+        mock_session.request.return_value = mock_response
+
+        manager = DatabricksJobManager()
+        details = manager.get_job_details(999)
+
+        assert details["job_type"] == "MULTI_TASK"
+        assert details["cluster_config"]["type"] == "multi_task"
+        assert len(details["tasks"]) == 2
+        assert details["tasks"][0]["task_key"] == "t1"
+        assert details["tasks"][0]["type"] == "NOTEBOOK"
     
     @patch.dict('os.environ', {
         'DATABRICKS_HOST': 'test-workspace.cloud.databricks.com',
         'DATABRICKS_TOKEN': 'test-token'
     })
-    @patch('src.mcp_server.job_manager.requests.post')
+    @patch('src.mcp_server.job_manager.requests.Session')
     @patch('src.mcp_server.job_manager.log_databricks_event')
-    def test_trigger_job_success(self, mock_log, mock_post):
+    def test_trigger_job_success(self, mock_log, mock_session_cls):
         """Test successful job triggering."""
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
         mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
         mock_response.status_code = 200
+        mock_response.content = b"{}"
         mock_response.json.return_value = {"run_id": 456789}
-        mock_post.return_value = mock_response
+        mock_session.request.return_value = mock_response
         
         manager = DatabricksJobManager()
         run_id = manager.trigger_job(123, notebook_params={"param1": "value1"})
         
         assert run_id == 456789
         # Verify the API was called with correct data
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert call_args[1]['json']['job_id'] == 123
-        assert call_args[1]['json']['notebook_params'] == {"param1": "value1"}
+        mock_session.request.assert_called_once()
+        call_args = mock_session.request.call_args
+        assert call_args.kwargs["json"]["job_id"] == 123
+        assert call_args.kwargs["json"]["notebook_params"] == {"param1": "value1"}
     
     @patch.dict('os.environ', {
         'DATABRICKS_HOST': 'test-workspace.cloud.databricks.com',
         'DATABRICKS_TOKEN': 'test-token'
     })
-    @patch('src.mcp_server.job_manager.requests.post')
+    @patch('src.mcp_server.job_manager.requests.Session')
     @patch('src.mcp_server.job_manager.log_databricks_event')
-    def test_cancel_job_run_success(self, mock_log, mock_post):
+    def test_cancel_job_run_success(self, mock_log, mock_session_cls):
         """Test successful job run cancellation."""
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
         mock_response = Mock()
-        mock_response.raise_for_status.return_value = None
         mock_response.status_code = 200
+        mock_response.content = b"{}"
         mock_response.json.return_value = {}
-        mock_post.return_value = mock_response
+        mock_session.request.return_value = mock_response
         
         manager = DatabricksJobManager()
         result = manager.cancel_job_run(456789)
         
         assert result is True
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert call_args[1]['json']['run_id'] == 456789
+        mock_session.request.assert_called_once()
+        call_args = mock_session.request.call_args
+        assert call_args.kwargs["json"]["run_id"] == 456789
     
     def test_determine_job_type(self):
         """Test job type determination from settings."""
@@ -291,6 +340,7 @@ class TestMCPJobTools:
         assert "Run ID**: 456789" in result
         mock_manager.trigger_job.assert_called_once_with(
             job_id=123,
+            job_parameters=None,
             notebook_params={"param1": "value1"},
             jar_params=None,
             python_params=None
@@ -308,6 +358,24 @@ class TestMCPJobTools:
         assert "Error: notebook_params must be valid JSON string" in result
         # Manager should not be called with invalid JSON
         mock_manager.trigger_job.assert_not_called()
+
+    @patch('src.mcp_server.mcp_server.get_job_manager')
+    @patch('src.mcp_server.mcp_server.log_mcp_event')
+    def test_trigger_job_job_parameters(self, mock_log, mock_get_manager):
+        """Test trigger_job accepts job_parameters JSON object."""
+        mock_manager = Mock()
+        mock_manager.trigger_job.return_value = 456789
+        mock_get_manager.return_value = mock_manager
+
+        result = _trigger_job(123, job_parameters='{"k": "v"}')
+        assert "Job 123 triggered successfully" in result
+        mock_manager.trigger_job.assert_called_once_with(
+            job_id=123,
+            job_parameters={"k": "v"},
+            notebook_params=None,
+            jar_params=None,
+            python_params=None
+        )
     
     @patch('src.mcp_server.mcp_server.get_job_manager')
     @patch('src.mcp_server.mcp_server.log_mcp_event')
