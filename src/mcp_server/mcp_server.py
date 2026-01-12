@@ -3,8 +3,6 @@ MCP Server for Databricks Integration
 Provides AI solutions with tools to interact with Databricks via MCP protocol
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os
