@@ -194,9 +194,6 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Internal development tracking (keep private)
-CHANGELOG.md
-
 # Note: PROJECT_STATUS.md is now public to help contributors understand project maturity
 
 local
