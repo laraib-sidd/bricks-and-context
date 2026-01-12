@@ -32,9 +32,9 @@ class TestMCPServerTools:
             
             mock_conn.cursor.return_value = mock_cursor
             mock_cursor.description = [('id',), ('name',), ('value',)]
-            mock_cursor.fetchall.return_value = [
-                (1, 'test', 100),
-                (2, 'demo', 200)
+            mock_cursor.fetchmany.side_effect = [
+                [(1, 'test', 100), (2, 'demo', 200)],
+                [],
             ]
             
             # Execute test
@@ -49,16 +49,16 @@ class TestMCPServerTools:
             
             # Verify mocks were called correctly
             mock_cursor.execute.assert_called_once_with("SELECT id, name, value FROM test_table")
-            mock_cursor.fetchall.assert_called_once()
 
     @patch('src.mcp_server.mcp_server.get_pool')
     def test_execute_sql_query_error(self, mock_get_pool):
         """Test SQL query execution with database error"""
         # Setup mock to raise exception
         mock_get_pool.side_effect = Exception("Connection failed")
+        with patch.dict("os.environ", {"ENABLE_SQL_RETRIES": "false"}):
         
-        # Execute test
-        result = mcp_server._execute_sql_query("SELECT * FROM invalid_table")
+            # Execute test
+            result = mcp_server._execute_sql_query("SELECT * FROM invalid_table")
         
         # Verify error handling
         assert "Error executing query: Connection failed" in result
@@ -80,7 +80,7 @@ class TestMCPServerTools:
             
             mock_conn.cursor.return_value = mock_cursor
             mock_cursor.description = [('count',)]
-            mock_cursor.fetchall.return_value = []
+            mock_cursor.fetchmany.side_effect = [[]]
             
             # Execute test
             result = mcp_server._execute_sql_query("SELECT COUNT(*) FROM empty_table")
@@ -88,6 +88,36 @@ class TestMCPServerTools:
             # Verify results
             assert "Query executed successfully. No rows returned." in result
             assert "Columns: count" in result
+
+    @patch('src.mcp_server.mcp_server.get_pool')
+    def test_execute_sql_query_truncation(self, mock_get_pool):
+        """Test SQL query execution truncates large outputs safely."""
+        mock_pool = Mock()
+        mock_conn = Mock()
+        mock_cursor = Mock()
+        mock_get_pool.return_value = mock_pool
+
+        with patch.dict("os.environ", {"MAX_RESULT_ROWS": "3", "MAX_RESULT_BYTES": "2048", "ENABLE_SQL_RETRIES": "false"}):
+            with patch('src.mcp_server.mcp_server.PooledConnection') as mock_pooled_conn:
+                mock_pooled_conn.return_value.__enter__.return_value = mock_conn
+                mock_pooled_conn.return_value.__exit__.return_value = None
+
+                mock_conn.cursor.return_value = mock_cursor
+                mock_cursor.description = [('id',), ('txt',)]
+                # Return more rows than allowed; implementation uses fetchmany.
+                mock_cursor.fetchmany.side_effect = [
+                    [(1, "a"), (2, "b")],
+                    [(3, "c"), (4, "d")],
+                    [],
+                ]
+
+                result = mcp_server._execute_sql_query("SELECT id, txt FROM t")
+
+                assert "Query Results (3 rows" in result
+                assert "truncated" in result
+                assert "Results truncated for safety" in result
+                assert "| 1 | a |" in result
+                assert "| 3 | c |" in result
 
     @patch('src.mcp_server.mcp_server.get_pool')
     def test_discover_schemas_success(self, mock_get_pool):

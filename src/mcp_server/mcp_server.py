@@ -3,18 +3,21 @@ MCP Server for Databricks Integration
 Provides AI solutions with tools to interact with Databricks via MCP protocol
 """
 
-from typing import Any, Dict, List, Optional
-import asyncio
-import json
-from fastmcp import FastMCP
-from databricks.sql.client import Connection
+from __future__ import annotations
 
-from .connection_pool import get_pool, PooledConnection
+import hashlib
+import json
+import os
+from typing import Optional
+
+from fastmcp import FastMCP
+
+from .cache_manager import get_cached_query_result, cache_query_result, get_cache_stats
+from .connection_pool import PooledConnection, get_pool
+from .error_handler import with_databricks_retry
 from .job_manager import get_job_manager
 from .logger import log_mcp_event
-from .cache_manager import get_cache_stats
 from .performance_monitor import get_performance_stats
-from .error_handler import get_error_handler
 
 
 # Create FastMCP server instance optimized for AI solutions
@@ -22,42 +25,166 @@ mcp = FastMCP("bricks-and-context")
 
 
 # Core functions (testable without MCP decorators)
+def _is_read_only_sql(sql: str) -> bool:
+    """
+    Best-effort check for read-only SQL.
+
+    We intentionally keep this conservative: if we can't confidently detect read-only,
+    we treat it as write-capable and do not apply retries/caching by default.
+    """
+    s = sql.strip().lstrip("(").strip().lower()
+    return s.startswith(("select", "show", "describe", "explain", "with"))
+
+
+def _normalize_sql_for_cache(sql: str) -> str:
+    """Normalize SQL for hashing (do not attempt to parse SQL)."""
+    # Collapse whitespace to reduce cache misses for equivalent queries
+    return " ".join(sql.strip().split())
+
+
+def _escape_markdown_cell(value: str) -> str:
+    """Escape characters that break markdown tables."""
+    # Pipes break columns; newlines break rows; carriage returns can be messy.
+    return value.replace("|", "\\|").replace("\r", " ").replace("\n", "\\n")
+
+
 def _execute_sql_query(sql: str) -> str:
-    """Core SQL execution logic"""
+    """Core SQL execution logic with safety limits and proper cleanup."""
+    sql_stripped = sql.strip()
+    if not sql_stripped:
+        return "Error executing query: SQL query is empty."
+
+    allow_write = os.getenv("ALLOW_WRITE_QUERIES", "false").strip().lower() in {"1", "true", "yes"}
+    if not allow_write and not _is_read_only_sql(sql_stripped):
+        return (
+            "Error executing query: only read-only queries are allowed by default.\n\n"
+            "Set ALLOW_WRITE_QUERIES=true to enable write queries.\n\n"
+            f"Query: {sql}"
+        )
+
+    max_rows = int(os.getenv("MAX_RESULT_ROWS", "200"))
+    max_rows = min(max(max_rows, 1), 5000)
+
+    max_bytes = int(os.getenv("MAX_RESULT_BYTES", str(256 * 1024)))
+    max_bytes = min(max(max_bytes, 32 * 1024), 5 * 1024 * 1024)
+
+    max_cell_chars = int(os.getenv("MAX_CELL_CHARS", "200"))
+    max_cell_chars = min(max(max_cell_chars, 20), 2000)
+
+    enable_query_cache = os.getenv("ENABLE_QUERY_CACHE", "false").strip().lower() in {"1", "true", "yes"}
+    cache_ttl = int(os.getenv("QUERY_CACHE_TTL_SECONDS", "300"))
+    cache_ttl = min(max(cache_ttl, 30), 3600)
+    enable_sql_retries = os.getenv("ENABLE_SQL_RETRIES", "true").strip().lower() in {"1", "true", "yes"}
+
+    normalized = _normalize_sql_for_cache(sql_stripped)
+    sql_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    if enable_query_cache and _is_read_only_sql(sql_stripped):
+        cached = get_cached_query_result(sql_hash)
+        if cached is not None:
+            return f"✅ Cached result (TTL: {cache_ttl}s)\n\n{cached}"
+
+    # Only retry read-only queries (safe-ish). Writes should fail fast by default.
+    exec_fn = _execute_sql_query_once
+    if enable_sql_retries and _is_read_only_sql(sql_stripped):
+        exec_fn = with_databricks_retry("execute_sql_query")(_execute_sql_query_once)
+
     try:
-        pool = get_pool()
-        with PooledConnection(pool) as conn:
-            cursor = conn.cursor()
-            cursor.execute(sql.strip())
-            
-            # Get column names
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            
-            # Get all results
-            rows = cursor.fetchall()
-            
-            if not rows:
-                return f"Query executed successfully. No rows returned.\nColumns: {', '.join(columns)}"
-            
-            # Format as markdown table for AI parsing
-            if not columns:
-                return "Query executed successfully but no column information available."
-            
-            # Create markdown table
-            header = "| " + " | ".join(columns) + " |"
-            separator = "| " + " | ".join(["---"] * len(columns)) + " |"
-            
-            table_rows = []
-            for row in rows:
-                # Convert each cell to string, handling None values
-                cells = [str(cell) if cell is not None else "NULL" for cell in row]
-                table_rows.append("| " + " | ".join(cells) + " |")
-            
-            result = f"Query Results ({len(rows)} rows):\n\n{header}\n{separator}\n" + "\n".join(table_rows)
-            return result
-            
+        result = exec_fn(
+            sql=sql_stripped,
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            max_cell_chars=max_cell_chars,
+        )
+
+        if enable_query_cache and _is_read_only_sql(sql_stripped) and result.startswith("Query Results"):
+            # Cache the rendered result to keep client consumption cheap and stable.
+            cache_query_result(sql_hash, result, ttl_seconds=cache_ttl)
+
+        return result
     except Exception as e:
         return f"Error executing query: {str(e)}\n\nQuery: {sql}"
+
+
+def _execute_sql_query_once(*, sql: str, max_rows: int, max_bytes: int, max_cell_chars: int) -> str:
+    """Execute SQL once (no retries here), streaming results with hard limits."""
+    pool = get_pool()
+    with PooledConnection(pool) as conn:
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql)
+
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            if not columns:
+                # For commands that don't return rows.
+                return "Query executed successfully but no column information available."
+
+            header = "| " + " | ".join(_escape_markdown_cell(str(c)) for c in columns) + " |"
+            separator = "| " + " | ".join(["---"] * len(columns)) + " |"
+
+            table_rows: list[str] = []
+            total_rows_seen = 0
+            truncated = False
+            bytes_used = len(header) + len(separator) + 64
+
+            # Pull in chunks to avoid loading huge results into memory.
+            fetch_size = min(200, max_rows)
+            while True:
+                if total_rows_seen >= max_rows:
+                    truncated = True
+                    break
+
+                remaining = max_rows - total_rows_seen
+                chunk = cursor.fetchmany(min(fetch_size, remaining))
+                if not chunk:
+                    break
+
+                for row in chunk:
+                    cells = []
+                    for cell in row:
+                        cell_str = "NULL" if cell is None else str(cell)
+                        cell_str = _escape_markdown_cell(cell_str)
+                        if len(cell_str) > max_cell_chars:
+                            cell_str = cell_str[: max_cell_chars - 1] + "…"
+                        cells.append(cell_str)
+
+                    line = "| " + " | ".join(cells) + " |"
+                    bytes_used += len(line) + 1
+                    if bytes_used > max_bytes:
+                        truncated = True
+                        break
+
+                    table_rows.append(line)
+                    total_rows_seen += 1
+
+                if truncated:
+                    break
+
+            if total_rows_seen == 0:
+                return f"Query executed successfully. No rows returned.\nColumns: {', '.join(columns)}"
+
+            meta = f"Query Results ({total_rows_seen} rows"
+            if truncated:
+                meta += ", truncated"
+            meta += "):\n\n"
+
+            result = meta + f"{header}\n{separator}\n" + "\n".join(table_rows)
+            if truncated:
+                result += (
+                    "\n\n"
+                    f"⚠️ Results truncated for safety (MAX_RESULT_ROWS={max_rows}, MAX_RESULT_BYTES={max_bytes}). "
+                    "Add a LIMIT clause or tighten your WHERE filters."
+                )
+
+            return result
+        finally:
+            # Ensure cursor is closed even if formatting or fetch fails.
+            try:
+                if cursor is not None:
+                    cursor.close()
+            except Exception:
+                pass
 
 
 @mcp.tool()
@@ -379,27 +506,53 @@ def _get_job_details(job_id: int) -> str:
         
         cluster_config = details['cluster_config']
         result += f"**Cluster Configuration**:\n"
-        result += f"- Type: {cluster_config['type']}\n"
-        if cluster_config['type'] == 'existing':
+        result += f"- Type: {cluster_config.get('type')}\n"
+        if cluster_config.get('type') == 'existing':
             result += f"- Cluster ID: {cluster_config.get('cluster_id')}\n"
-        elif cluster_config['type'] == 'new':
+        elif cluster_config.get('type') == 'new':
             result += f"- Spark Version: {cluster_config.get('spark_version')}\n"
             result += f"- Node Type: {cluster_config.get('node_type_id')}\n"
             result += f"- Workers: {cluster_config.get('num_workers')}\n"
+        elif cluster_config.get('type') == 'multi_task':
+            job_clusters = cluster_config.get('job_clusters', []) or []
+            result += f"- Job Clusters: {len(job_clusters)}\n"
         
-        task_config = details['task_config']
-        result += f"\n**Task Configuration**:\n"
-        result += f"- Type: {task_config['type']}\n"
-        if task_config['type'] == 'NOTEBOOK':
-            result += f"- Notebook Path: {task_config.get('notebook_path')}\n"
-            if task_config.get('base_parameters'):
-                result += f"- Parameters: {task_config['base_parameters']}\n"
-        elif task_config['type'] == 'PYTHON':
-            result += f"- Python File: {task_config.get('python_file')}\n"
-            if task_config.get('parameters'):
-                result += f"- Parameters: {task_config['parameters']}\n"
-        elif task_config['type'] == 'SQL':
-            result += f"- Warehouse ID: {task_config.get('warehouse_id')}\n"
+        tasks = details.get('tasks') or []
+        if tasks:
+            result += f"\n**Tasks** ({len(tasks)}):\n"
+            result += "| Task Key | Type | Cluster | Details |\n"
+            result += "| --- | --- | --- | --- |\n"
+            for t in tasks:
+                details_obj = t.get("details", {}) or {}
+                cluster_obj = details_obj.get("cluster", {}) or {}
+                cluster_str = cluster_obj.get("type", "unknown")
+                if cluster_obj.get("type") == "existing":
+                    cluster_str += f":{cluster_obj.get('cluster_id')}"
+                elif cluster_obj.get("type") == "job_cluster":
+                    cluster_str += f":{cluster_obj.get('key')}"
+                # Keep details short; this is a human-readable overview.
+                extra = ""
+                if t.get("type") == "NOTEBOOK":
+                    extra = str(details_obj.get("notebook_path") or "")
+                elif t.get("type") == "PYTHON":
+                    extra = str(details_obj.get("python_file") or "")
+                elif t.get("type") == "SQL":
+                    extra = str(details_obj.get("warehouse_id") or "")
+                result += f"| {t.get('task_key')} | {t.get('type')} | {cluster_str} | {extra} |\n"
+        else:
+            task_config = details['task_config']
+            result += f"\n**Task Configuration**:\n"
+            result += f"- Type: {task_config['type']}\n"
+            if task_config['type'] == 'NOTEBOOK':
+                result += f"- Notebook Path: {task_config.get('notebook_path')}\n"
+                if task_config.get('base_parameters'):
+                    result += f"- Parameters: {task_config['base_parameters']}\n"
+            elif task_config['type'] == 'PYTHON':
+                result += f"- Python File: {task_config.get('python_file')}\n"
+                if task_config.get('parameters'):
+                    result += f"- Parameters: {task_config['parameters']}\n"
+            elif task_config['type'] == 'SQL':
+                result += f"- Warehouse ID: {task_config.get('warehouse_id')}\n"
         
         log_mcp_event("get_job_details", "SUCCESS", f"Retrieved details for job {job_id}")
         return result
@@ -487,7 +640,8 @@ def get_job_runs(job_id: int, limit: int = 10, active_only: bool = False) -> str
 
 
 def _trigger_job(job_id: int, notebook_params: Optional[str] = None, 
-                jar_params: Optional[str] = None, python_params: Optional[str] = None) -> str:
+                jar_params: Optional[str] = None, python_params: Optional[str] = None,
+                job_parameters: Optional[str] = None) -> str:
     """Core job triggering logic"""
     try:
         log_mcp_event("trigger_job", "START", f"Triggering job {job_id}")
@@ -495,9 +649,18 @@ def _trigger_job(job_id: int, notebook_params: Optional[str] = None,
         job_manager = get_job_manager()
         
         # Parse parameters if provided (expect JSON strings)
+        parsed_job_parameters = None
         parsed_notebook_params = None
         parsed_jar_params = None
         parsed_python_params = None
+
+        if job_parameters:
+            try:
+                parsed_job_parameters = json.loads(job_parameters)
+                if not isinstance(parsed_job_parameters, dict):
+                    return f"Error: job_parameters must be a JSON object string. Got: {job_parameters}"
+            except json.JSONDecodeError:
+                return f"Error: job_parameters must be valid JSON string. Got: {job_parameters}"
         
         if notebook_params:
             try:
@@ -519,6 +682,7 @@ def _trigger_job(job_id: int, notebook_params: Optional[str] = None,
         
         run_id = job_manager.trigger_job(
             job_id=job_id,
+            job_parameters=parsed_job_parameters,
             notebook_params=parsed_notebook_params,
             jar_params=parsed_jar_params,
             python_params=parsed_python_params
@@ -540,7 +704,8 @@ def _trigger_job(job_id: int, notebook_params: Optional[str] = None,
 
 @mcp.tool()
 def trigger_job(job_id: int, notebook_params: Optional[str] = None, 
-               jar_params: Optional[str] = None, python_params: Optional[str] = None) -> str:
+               jar_params: Optional[str] = None, python_params: Optional[str] = None,
+               job_parameters: Optional[str] = None) -> str:
     """
     Trigger a Databricks job run with optional parameters.
     
@@ -560,7 +725,7 @@ def trigger_job(job_id: int, notebook_params: Optional[str] = None,
         
     Security: Use with caution - this will start actual job execution
     """
-    return _trigger_job(job_id, notebook_params, jar_params, python_params)
+    return _trigger_job(job_id, notebook_params, jar_params, python_params, job_parameters)
 
 
 def _cancel_job_run(run_id: int) -> str:
