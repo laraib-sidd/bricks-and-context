@@ -122,12 +122,30 @@ graph TB
 3. **Configure environment**
    ```bash
    # Recommended:
-   cp auth.template.yaml auth.yaml
-   cp config.template.json config.json
+   # Create auth.yaml (NOT committed)
+   # Create config.json (committed project properties)
 
-   # Optional: if you prefer env vars, copy env.template to .env
-   # cp env.template .env
+   # Optional: env-based setup is still supported via environment variables
    ```
+
+### `auth.yaml` format (do not commit)
+
+Create `auth.yaml` in the repo root:
+
+```yaml
+default_workspace: dev
+
+workspaces:
+  - name: dev
+    host: your-dev.cloud.databricks.com
+    token: dapi...
+    http_path: /sql/1.0/warehouses/....
+
+  - name: prod
+    host: your-prod.cloud.databricks.com
+    token: dapi...
+    http_path: /sql/1.0/warehouses/....
+```
 
 4. **Test the connection** (optional)
    ```bash
