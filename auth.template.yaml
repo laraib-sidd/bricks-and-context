@@ -1,0 +1,19 @@
+# Bricks and Context - Auth / Workspaces (YAML template)
+#
+# Copy this file to auth.yaml and fill in values.
+# IMPORTANT: auth.yaml contains secrets and must NOT be committed.
+#
+# Default workspace used when tool calls omit `workspace`
+default_workspace: dev
+
+workspaces:
+  - name: dev
+    host: your-dev.cloud.databricks.com
+    token: dapi...
+    http_path: /sql/1.0/warehouses/....
+
+  - name: prod
+    host: your-prod.cloud.databricks.com
+    token: dapi...
+    http_path: /sql/1.0/warehouses/....
+

@@ -122,8 +122,8 @@ graph TB
 3. **Configure environment**
    ```bash
    # Recommended:
-   # Create auth.yaml (NOT committed)
-   # Create config.json (committed project properties)
+   cp auth.template.yaml auth.yaml   # NOT committed (contains secrets)
+   # config.json is committed project properties; tweak as needed
 
    # Optional: env-based setup is still supported via environment variables
    ```
