@@ -4,16 +4,21 @@ Entry point for the Bricks and Context MCP Server
 
 Run this script to start the MCP server for AI integrations with Databricks.
 The server uses stdio transport by default, making it compatible with
-Claude Desktop and other MCP clients.
+Claude Desktop, Cursor, and other MCP clients.
 
 Usage:
     python run_mcp_server.py
-    
-Environment Variables:
-    DATABRICKS_HOST - Databricks workspace hostname
-    DATABRICKS_TOKEN - Databricks access token  
-    DATABRICKS_HTTP_PATH - SQL warehouse HTTP path
-    MAX_CONNECTIONS - Maximum connection pool size (default: 10)
+
+Configuration:
+    auth.yaml           - Workspace credentials (see auth.template.yaml)
+    config.json         - Tunable settings (connection pool, limits, etc.)
+
+Environment Variables (optional overrides):
+    MCP_AUTH_PATH       - Path to auth.yaml (default: ./auth.yaml)
+    MCP_CONFIG_PATH     - Path to config.json (default: ./config.json)
+    DATABRICKS_HOST     - Legacy: single workspace hostname
+    DATABRICKS_TOKEN    - Legacy: single workspace access token
+    DATABRICKS_HTTP_PATH - Legacy: single workspace SQL warehouse path
 """
 
 from src.mcp_server.mcp_server import run_server

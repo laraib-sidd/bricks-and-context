@@ -4,11 +4,12 @@ Workspace configuration support.
 Goal: allow configuring multiple Databricks workspaces while remaining backwards-compatible
 with the legacy single-workspace env vars.
 
-Supported formats:
+Supported formats (in priority order):
+
 1) YAML auth file (recommended):
    - MCP_AUTH_PATH=./auth.yaml (default)
    - auth.yaml:
-       default_workspace: dev   # optional
+       default_workspace: dev
        workspaces:
          - name: prod
            host: ...
@@ -16,14 +17,13 @@ Supported formats:
            http_path: ...
 
 2) Multiple workspaces via JSON env:
-1) Legacy single workspace:
+   - DATABRICKS_WORKSPACES_JSON='[{"name":"prod","host":"...","token":"...","http_path":"..."}, ...]'
+   - DEFAULT_WORKSPACE='prod' (optional; defaults to first entry)
+
+3) Legacy single workspace:
    - DATABRICKS_HOST
    - DATABRICKS_TOKEN
    - DATABRICKS_HTTP_PATH
-
-3) Multiple workspaces via JSON:
-   - DATABRICKS_WORKSPACES_JSON='[{"name":"prod","host":"...","token":"...","http_path":"..."}, ...]'
-   - DEFAULT_WORKSPACE='prod' (optional; defaults to first entry)
 """
 
 from __future__ import annotations

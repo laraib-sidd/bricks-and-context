@@ -1,11 +1,13 @@
 import pytest
+import os
 
 from src.mcp_server.workspaces import get_workspace_config, get_workspaces, resolve_workspace_name
 
 
-def test_legacy_single_workspace_env(monkeypatch):
+def test_legacy_single_workspace_env(monkeypatch, tmp_path):
+    # Point to non-existent auth.yaml so YAML loader returns None
+    monkeypatch.setenv("MCP_AUTH_PATH", str(tmp_path / "nonexistent.yaml"))
     monkeypatch.delenv("DATABRICKS_WORKSPACES_JSON", raising=False)
-    monkeypatch.delenv("MCP_AUTH_PATH", raising=False)
     monkeypatch.setenv("DATABRICKS_HOST", "test.databricks.com")
     monkeypatch.setenv("DATABRICKS_TOKEN", "tok")
     monkeypatch.setenv("DATABRICKS_HTTP_PATH", "/sql/1.0/warehouses/x")
@@ -17,8 +19,9 @@ def test_legacy_single_workspace_env(monkeypatch):
     assert cfg.host == "test.databricks.com"
 
 
-def test_multi_workspace_json(monkeypatch):
-    monkeypatch.delenv("MCP_AUTH_PATH", raising=False)
+def test_multi_workspace_json(monkeypatch, tmp_path):
+    # Point to non-existent auth.yaml so YAML loader returns None
+    monkeypatch.setenv("MCP_AUTH_PATH", str(tmp_path / "nonexistent.yaml"))
     monkeypatch.delenv("DATABRICKS_HOST", raising=False)
     monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
     monkeypatch.delenv("DATABRICKS_HTTP_PATH", raising=False)
@@ -35,8 +38,9 @@ def test_multi_workspace_json(monkeypatch):
     assert cfg.host == "p.databricks.com"
 
 
-def test_unknown_workspace_raises(monkeypatch):
-    monkeypatch.delenv("MCP_AUTH_PATH", raising=False)
+def test_unknown_workspace_raises(monkeypatch, tmp_path):
+    # Point to non-existent auth.yaml so YAML loader returns None
+    monkeypatch.setenv("MCP_AUTH_PATH", str(tmp_path / "nonexistent.yaml"))
     monkeypatch.setenv(
         "DATABRICKS_WORKSPACES_JSON",
         '[{"name":"prod","host":"p.databricks.com","token":"t1","http_path":"/sql/1.0/warehouses/a"}]',
