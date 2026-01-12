@@ -15,7 +15,10 @@ def reset_config_cache():
 
 def test_config_json_defaults(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({"max_connections": 22, "enable_query_cache": True}), encoding="utf-8")
+    cfg.write_text(
+        json.dumps({"max_connections": 22, "enable_query_cache": True}),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("MCP_CONFIG_PATH", str(cfg))
     # Clear env vars that might override
     monkeypatch.delenv("MAX_CONNECTIONS", raising=False)
