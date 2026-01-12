@@ -52,24 +52,46 @@ cp auth.template.yaml auth.yaml   # NOT committed (contains secrets)
 
 ## Cursor Setup (MCP)
 
-This server uses **stdio transport**, which is what Cursor’s MCP integration expects.
+This server uses **stdio transport**, which Cursor expects for MCP.
 
-In Cursor, add an MCP server that runs:
+### Step 1: Open Cursor Settings
 
-```bash
-python run_mcp_server.py
+1. Open Cursor
+2. Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows/Linux)
+3. Type **"Open MCP Settings"** and select it
+4. This opens `~/.cursor/mcp.json`
+
+### Step 2: Add the server config
+
+Add the following to your `mcp.json` (create the file if it doesn't exist):
+
+```json
+{
+  "mcpServers": {
+    "bricks-and-context": {
+      "command": "python",
+      "args": ["/absolute/path/to/bricks-and-context/run_mcp_server.py"],
+      "env": {
+        "MCP_AUTH_PATH": "/absolute/path/to/bricks-and-context/auth.yaml",
+        "MCP_CONFIG_PATH": "/absolute/path/to/bricks-and-context/config.json"
+      }
+    }
+  }
+}
 ```
 
-Make sure the process can find your config files:
-- **Default paths**: `auth.yaml` and `config.json` in the repo root
-- **Or set**: `MCP_AUTH_PATH` and `MCP_CONFIG_PATH`
+> **Replace** `/absolute/path/to/bricks-and-context` with the actual path to this repo on your machine.
 
-Example environment values for Cursor:
+### Step 3: Restart Cursor
 
-```bash
-MCP_AUTH_PATH=/absolute/path/to/auth.yaml
-MCP_CONFIG_PATH=/absolute/path/to/config.json
-```
+Restart Cursor (or reload the window) to pick up the new MCP server.
+
+### Verify
+
+Once running, you can ask the AI to use Databricks tools, e.g.:
+- *"List my Databricks jobs"*
+- *"Run SELECT 1 on Databricks"*
+- *"Describe the schema of my_catalog.my_schema.my_table"*
 
 ## Multi-workspace
 
