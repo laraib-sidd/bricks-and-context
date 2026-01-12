@@ -3,8 +3,6 @@ MCP Server for Databricks Integration
 Provides AI solutions with tools to interact with Databricks via MCP protocol
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import os
@@ -12,12 +10,14 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
+from .config import get_setting_bool, get_setting_int
 from .cache_manager import get_cached_query_result, cache_query_result, get_cache_stats
 from .connection_pool import PooledConnection, get_pool
 from .error_handler import with_databricks_retry
 from .job_manager import get_job_manager
 from .logger import log_mcp_event
 from .performance_monitor import get_performance_stats
+from .workspaces import get_workspaces, resolve_workspace_name
 
 
 # Create FastMCP server instance optimized for AI solutions
@@ -48,13 +48,15 @@ def _escape_markdown_cell(value: str) -> str:
     return value.replace("|", "\\|").replace("\r", " ").replace("\n", "\\n")
 
 
-def _execute_sql_query(sql: str) -> str:
+def _execute_sql_query(sql: str, workspace: Optional[str] = None) -> str:
     """Core SQL execution logic with safety limits and proper cleanup."""
     sql_stripped = sql.strip()
     if not sql_stripped:
         return "Error executing query: SQL query is empty."
 
-    allow_write = os.getenv("ALLOW_WRITE_QUERIES", "false").strip().lower() in {"1", "true", "yes"}
+    workspace_name = resolve_workspace_name(workspace)
+
+    allow_write = get_setting_bool("ALLOW_WRITE_QUERIES", "allow_write_queries", False)
     if not allow_write and not _is_read_only_sql(sql_stripped):
         return (
             "Error executing query: only read-only queries are allowed by default.\n\n"
@@ -62,27 +64,28 @@ def _execute_sql_query(sql: str) -> str:
             f"Query: {sql}"
         )
 
-    max_rows = int(os.getenv("MAX_RESULT_ROWS", "200"))
+    max_rows = get_setting_int("MAX_RESULT_ROWS", "max_result_rows", 200)
     max_rows = min(max(max_rows, 1), 5000)
 
-    max_bytes = int(os.getenv("MAX_RESULT_BYTES", str(256 * 1024)))
+    max_bytes = get_setting_int("MAX_RESULT_BYTES", "max_result_bytes", 256 * 1024)
     max_bytes = min(max(max_bytes, 32 * 1024), 5 * 1024 * 1024)
 
-    max_cell_chars = int(os.getenv("MAX_CELL_CHARS", "200"))
+    max_cell_chars = get_setting_int("MAX_CELL_CHARS", "max_cell_chars", 200)
     max_cell_chars = min(max(max_cell_chars, 20), 2000)
 
-    enable_query_cache = os.getenv("ENABLE_QUERY_CACHE", "false").strip().lower() in {"1", "true", "yes"}
-    cache_ttl = int(os.getenv("QUERY_CACHE_TTL_SECONDS", "300"))
+    enable_query_cache = get_setting_bool("ENABLE_QUERY_CACHE", "enable_query_cache", False)
+    cache_ttl = get_setting_int("QUERY_CACHE_TTL_SECONDS", "query_cache_ttl_seconds", 300)
     cache_ttl = min(max(cache_ttl, 30), 3600)
-    enable_sql_retries = os.getenv("ENABLE_SQL_RETRIES", "true").strip().lower() in {"1", "true", "yes"}
+    enable_sql_retries = get_setting_bool("ENABLE_SQL_RETRIES", "enable_sql_retries", True)
 
     normalized = _normalize_sql_for_cache(sql_stripped)
     sql_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    cache_key = f"{workspace_name}:{sql_hash}"
 
     if enable_query_cache and _is_read_only_sql(sql_stripped):
-        cached = get_cached_query_result(sql_hash)
+        cached = get_cached_query_result(cache_key)
         if cached is not None:
-            return f"✅ Cached result (TTL: {cache_ttl}s)\n\n{cached}"
+            return f"✅ Cached result (workspace: {workspace_name}, TTL: {cache_ttl}s)\n\n{cached}"
 
     # Only retry read-only queries (safe-ish). Writes should fail fast by default.
     exec_fn = _execute_sql_query_once
@@ -92,6 +95,7 @@ def _execute_sql_query(sql: str) -> str:
     try:
         result = exec_fn(
             sql=sql_stripped,
+            workspace=workspace_name,
             max_rows=max_rows,
             max_bytes=max_bytes,
             max_cell_chars=max_cell_chars,
@@ -99,16 +103,18 @@ def _execute_sql_query(sql: str) -> str:
 
         if enable_query_cache and _is_read_only_sql(sql_stripped) and result.startswith("Query Results"):
             # Cache the rendered result to keep client consumption cheap and stable.
-            cache_query_result(sql_hash, result, ttl_seconds=cache_ttl)
+            cache_query_result(cache_key, result, ttl_seconds=cache_ttl)
 
         return result
     except Exception as e:
         return f"Error executing query: {str(e)}\n\nQuery: {sql}"
 
 
-def _execute_sql_query_once(*, sql: str, max_rows: int, max_bytes: int, max_cell_chars: int) -> str:
+def _execute_sql_query_once(
+    *, sql: str, workspace: str, max_rows: int, max_bytes: int, max_cell_chars: int
+) -> str:
     """Execute SQL once (no retries here), streaming results with hard limits."""
-    pool = get_pool()
+    pool = get_pool(workspace)
     with PooledConnection(pool) as conn:
         cursor = None
         try:
@@ -188,7 +194,7 @@ def _execute_sql_query_once(*, sql: str, max_rows: int, max_bytes: int, max_cell
 
 
 @mcp.tool()
-def execute_sql_query(sql: str) -> str:
+def execute_sql_query(sql: str, workspace: Optional[str] = None) -> str:
     """
     Execute a SQL query against Databricks and return results in markdown table format.
     
@@ -205,14 +211,15 @@ def execute_sql_query(sql: str) -> str:
         
     Security: Only SELECT queries are recommended for AI safety
     """
-    return _execute_sql_query(sql)
+    return _execute_sql_query(sql, workspace)
 
 
-def _discover_schemas() -> str:
+def _discover_schemas(workspace: Optional[str] = None) -> str:
     """Core schema discovery logic"""
     try:
         sql = "SHOW SCHEMAS"
-        pool = get_pool()
+        workspace_name = resolve_workspace_name(workspace)
+        pool = get_pool(workspace_name)
         with PooledConnection(pool) as conn:
             cursor = conn.cursor()
             cursor.execute(sql)
@@ -241,7 +248,7 @@ def _discover_schemas() -> str:
 
 
 @mcp.tool()
-def discover_schemas() -> str:
+def discover_schemas(workspace: Optional[str] = None) -> str:
     """
     Discover all available schemas (databases) in the Databricks workspace.
     
@@ -250,14 +257,15 @@ def discover_schemas() -> str:
     Returns:
         Markdown table listing all schemas with descriptions
     """
-    return _discover_schemas()
+    return _discover_schemas(workspace)
 
 
-def _discover_tables(schema_name: str = "default") -> str:
+def _discover_tables(schema_name: str = "default", workspace: Optional[str] = None) -> str:
     """Core table discovery logic"""
     try:
         sql = f"SHOW TABLES IN {schema_name}"
-        pool = get_pool()
+        workspace_name = resolve_workspace_name(workspace)
+        pool = get_pool(workspace_name)
         with PooledConnection(pool) as conn:
             cursor = conn.cursor()
             cursor.execute(sql)
@@ -286,7 +294,7 @@ def _discover_tables(schema_name: str = "default") -> str:
 
 
 @mcp.tool()
-def discover_tables(schema_name: str = "default") -> str:
+def discover_tables(schema_name: str = "default", workspace: Optional[str] = None) -> str:
     """
     Discover all tables in a specific schema with metadata.
     
@@ -298,15 +306,16 @@ def discover_tables(schema_name: str = "default") -> str:
     Returns:
         Markdown table listing all tables with metadata
     """
-    return _discover_tables(schema_name)
+    return _discover_tables(schema_name, workspace)
 
 
-def _describe_table(table_name: str, schema_name: str = "default") -> str:
+def _describe_table(table_name: str, schema_name: str = "default", workspace: Optional[str] = None) -> str:
     """Core table description logic"""
     try:
         # Use DESCRIBE EXTENDED for comprehensive information
         sql = f"DESCRIBE EXTENDED {schema_name}.{table_name}"
-        pool = get_pool()
+        workspace_name = resolve_workspace_name(workspace)
+        pool = get_pool(workspace_name)
         with PooledConnection(pool) as conn:
             cursor = conn.cursor()
             cursor.execute(sql)
@@ -341,7 +350,7 @@ def _describe_table(table_name: str, schema_name: str = "default") -> str:
 
 
 @mcp.tool()
-def describe_table(table_name: str, schema_name: str = "default") -> str:
+def describe_table(table_name: str, schema_name: str = "default", workspace: Optional[str] = None) -> str:
     """
     Get detailed schema information for a specific table.
     
@@ -354,10 +363,10 @@ def describe_table(table_name: str, schema_name: str = "default") -> str:
     Returns:
         Markdown table with column details (name, type, nullable, etc.)
     """
-    return _describe_table(table_name, schema_name)
+    return _describe_table(table_name, schema_name, workspace)
 
 
-def _get_table_sample(table_name: str, schema_name: str = "default", limit: int = 5) -> str:
+def _get_table_sample(table_name: str, schema_name: str = "default", limit: int = 5, workspace: Optional[str] = None) -> str:
     """Core table sampling logic"""
     try:
         # Limit for performance and AI context efficiency
@@ -365,7 +374,7 @@ def _get_table_sample(table_name: str, schema_name: str = "default", limit: int 
         sql = f"SELECT * FROM {schema_name}.{table_name} LIMIT {safe_limit}"
         
         # Reuse the _execute_sql_query logic
-        result = _execute_sql_query(sql)
+        result = _execute_sql_query(sql, workspace)
         
         # Add context about the sampling
         if result.startswith("Query Results"):
@@ -378,7 +387,7 @@ def _get_table_sample(table_name: str, schema_name: str = "default", limit: int 
 
 
 @mcp.tool()
-def get_table_sample(table_name: str, schema_name: str = "default", limit: int = 5) -> str:
+def get_table_sample(table_name: str, schema_name: str = "default", limit: int = 5, workspace: Optional[str] = None) -> str:
     """
     Get a small sample of data from a table for AI analysis.
     
@@ -392,16 +401,17 @@ def get_table_sample(table_name: str, schema_name: str = "default", limit: int =
     Returns:
         Markdown table with sample data
     """
-    return _get_table_sample(table_name, schema_name, limit)
+    return _get_table_sample(table_name, schema_name, limit, workspace)
 
 
-def _connection_health() -> str:
+def _connection_health(workspace: Optional[str] = None) -> str:
     """Core connection health logic"""
     try:
-        pool = get_pool()
+        workspace_name = resolve_workspace_name(workspace)
+        pool = get_pool(workspace_name)
         
         # Test connection with simple query
-        test_result = _execute_sql_query("SELECT 1 as health_check")
+        test_result = _execute_sql_query("SELECT 1 as health_check", workspace_name)
         
         if "Error" in test_result:
             return f"⚠️ Connection Health: UNHEALTHY\n\nTest query failed:\n{test_result}"
@@ -413,7 +423,7 @@ def _connection_health() -> str:
 
 
 @mcp.tool()
-def connection_health() -> str:
+def connection_health(workspace: Optional[str] = None) -> str:
     """
     Check the health of the Databricks connection pool.
     
@@ -422,17 +432,18 @@ def connection_health() -> str:
     Returns:
         Status information about connection pool and Databricks connectivity
     """
-    return _connection_health()
+    return _connection_health(workspace)
 
 
 # ===== JOB MANAGEMENT TOOLS =====
 
-def _list_jobs(limit: int = 25, name_filter: Optional[str] = None) -> str:
+def _list_jobs(limit: int = 25, name_filter: Optional[str] = None, workspace: Optional[str] = None) -> str:
     """Core job listing logic"""
     try:
         log_mcp_event("list_jobs", "START", f"Listing jobs (limit: {limit}, filter: {name_filter})")
         
-        job_manager = get_job_manager()
+        workspace_name = resolve_workspace_name(workspace)
+        job_manager = get_job_manager(workspace_name)
         jobs = job_manager.list_jobs(limit=limit, name_filter=name_filter)
         
         if not jobs:
@@ -461,7 +472,7 @@ def _list_jobs(limit: int = 25, name_filter: Optional[str] = None) -> str:
 
 
 @mcp.tool()
-def list_jobs(limit: int = 25, name_filter: Optional[str] = None) -> str:
+def list_jobs(limit: int = 25, name_filter: Optional[str] = None, workspace: Optional[str] = None) -> str:
     """
     List Databricks jobs with optional filtering.
     
@@ -477,15 +488,16 @@ def list_jobs(limit: int = 25, name_filter: Optional[str] = None) -> str:
     Example:
         list_jobs(limit=10, name_filter="data_pipeline")
     """
-    return _list_jobs(limit, name_filter)
+    return _list_jobs(limit, name_filter, workspace)
 
 
-def _get_job_details(job_id: int) -> str:
+def _get_job_details(job_id: int, workspace: Optional[str] = None) -> str:
     """Core job details logic"""
     try:
         log_mcp_event("get_job_details", "START", f"Getting details for job {job_id}")
         
-        job_manager = get_job_manager()
+        workspace_name = resolve_workspace_name(workspace)
+        job_manager = get_job_manager(workspace_name)
         details = job_manager.get_job_details(job_id)
         
         # Format for AI consumption
@@ -564,7 +576,7 @@ def _get_job_details(job_id: int) -> str:
 
 
 @mcp.tool()
-def get_job_details(job_id: int) -> str:
+def get_job_details(job_id: int, workspace: Optional[str] = None) -> str:
     """
     Get detailed information about a specific Databricks job.
     
@@ -579,15 +591,16 @@ def get_job_details(job_id: int) -> str:
     Example:
         get_job_details(123)
     """
-    return _get_job_details(job_id)
+    return _get_job_details(job_id, workspace)
 
 
-def _get_job_runs(job_id: int, limit: int = 10, active_only: bool = False) -> str:
+def _get_job_runs(job_id: int, limit: int = 10, active_only: bool = False, workspace: Optional[str] = None) -> str:
     """Core job runs logic"""
     try:
         log_mcp_event("get_job_runs", "START", f"Getting runs for job {job_id} (limit: {limit}, active_only: {active_only})")
         
-        job_manager = get_job_manager()
+        workspace_name = resolve_workspace_name(workspace)
+        job_manager = get_job_manager(workspace_name)
         runs = job_manager.get_job_runs(job_id, limit=limit, active_only=active_only)
         
         if not runs:
@@ -619,7 +632,7 @@ def _get_job_runs(job_id: int, limit: int = 10, active_only: bool = False) -> st
 
 
 @mcp.tool()
-def get_job_runs(job_id: int, limit: int = 10, active_only: bool = False) -> str:
+def get_job_runs(job_id: int, limit: int = 10, active_only: bool = False, workspace: Optional[str] = None) -> str:
     """
     Get run history for a specific Databricks job.
     
@@ -636,17 +649,18 @@ def get_job_runs(job_id: int, limit: int = 10, active_only: bool = False) -> str
     Example:
         get_job_runs(123, limit=5, active_only=True)
     """
-    return _get_job_runs(job_id, limit, active_only)
+    return _get_job_runs(job_id, limit, active_only, workspace)
 
 
 def _trigger_job(job_id: int, notebook_params: Optional[str] = None, 
                 jar_params: Optional[str] = None, python_params: Optional[str] = None,
-                job_parameters: Optional[str] = None) -> str:
+                job_parameters: Optional[str] = None, workspace: Optional[str] = None) -> str:
     """Core job triggering logic"""
     try:
         log_mcp_event("trigger_job", "START", f"Triggering job {job_id}")
         
-        job_manager = get_job_manager()
+        workspace_name = resolve_workspace_name(workspace)
+        job_manager = get_job_manager(workspace_name)
         
         # Parse parameters if provided (expect JSON strings)
         parsed_job_parameters = None
@@ -705,7 +719,7 @@ def _trigger_job(job_id: int, notebook_params: Optional[str] = None,
 @mcp.tool()
 def trigger_job(job_id: int, notebook_params: Optional[str] = None, 
                jar_params: Optional[str] = None, python_params: Optional[str] = None,
-               job_parameters: Optional[str] = None) -> str:
+               job_parameters: Optional[str] = None, workspace: Optional[str] = None) -> str:
     """
     Trigger a Databricks job run with optional parameters.
     
@@ -725,15 +739,16 @@ def trigger_job(job_id: int, notebook_params: Optional[str] = None,
         
     Security: Use with caution - this will start actual job execution
     """
-    return _trigger_job(job_id, notebook_params, jar_params, python_params, job_parameters)
+    return _trigger_job(job_id, notebook_params, jar_params, python_params, job_parameters, workspace)
 
 
-def _cancel_job_run(run_id: int) -> str:
+def _cancel_job_run(run_id: int, workspace: Optional[str] = None) -> str:
     """Core job cancellation logic"""
     try:
         log_mcp_event("cancel_job_run", "START", f"Cancelling job run {run_id}")
         
-        job_manager = get_job_manager()
+        workspace_name = resolve_workspace_name(workspace)
+        job_manager = get_job_manager(workspace_name)
         success = job_manager.cancel_job_run(run_id)
         
         if success:
@@ -755,7 +770,7 @@ def _cancel_job_run(run_id: int) -> str:
 
 
 @mcp.tool()
-def cancel_job_run(run_id: int) -> str:
+def cancel_job_run(run_id: int, workspace: Optional[str] = None) -> str:
     """
     Cancel a running Databricks job.
     
@@ -772,15 +787,16 @@ def cancel_job_run(run_id: int) -> str:
         
     Security: Use carefully - this will stop actual job execution
     """
-    return _cancel_job_run(run_id)
+    return _cancel_job_run(run_id, workspace)
 
 
-def _get_job_run_output(run_id: int) -> str:
+def _get_job_run_output(run_id: int, workspace: Optional[str] = None) -> str:
     """Core job output logic"""
     try:
         log_mcp_event("get_job_run_output", "START", f"Getting output for job run {run_id}")
         
-        job_manager = get_job_manager()
+        workspace_name = resolve_workspace_name(workspace)
+        job_manager = get_job_manager(workspace_name)
         output = job_manager.get_job_run_output(run_id)
         
         result = f"Job Run Output for Run ID {run_id}:\n\n"
@@ -819,7 +835,7 @@ def _get_job_run_output(run_id: int) -> str:
 
 
 @mcp.tool()
-def get_job_run_output(run_id: int) -> str:
+def get_job_run_output(run_id: int, workspace: Optional[str] = None) -> str:
     """
     Get output, logs, and results from a job run.
     
@@ -834,7 +850,7 @@ def get_job_run_output(run_id: int) -> str:
     Example:
         get_job_run_output(456789)
     """
-    return _get_job_run_output(run_id)
+    return _get_job_run_output(run_id, workspace)
 
 
 # ===== PERFORMANCE MONITORING TOOLS =====
@@ -931,7 +947,7 @@ def cache_stats(random_string: str = "dummy") -> str:
     return _cache_stats()
 
 
-def _performance_stats() -> str:
+def _performance_stats(workspace: Optional[str] = None) -> str:
     """Core performance statistics logic"""
     try:
         log_mcp_event("performance_stats", "START", "Getting system performance statistics")
@@ -939,9 +955,14 @@ def _performance_stats() -> str:
         # Get performance stats
         perf_stats = get_performance_stats()
         
-        # Get connection pool stats
-        pool = get_pool()
-        pool_stats = pool.get_pool_stats()
+        pool_stats_by_workspace = {}
+        if workspace is not None:
+            ws = resolve_workspace_name(workspace)
+            pool_stats_by_workspace[ws] = get_pool(ws).get_pool_stats()
+        else:
+            # If multiple workspaces are configured, show all.
+            for ws in get_workspaces().keys():
+                pool_stats_by_workspace[ws] = get_pool(ws).get_pool_stats()
         
         # Get cache stats for performance context
         cache_stats = get_cache_stats()
@@ -961,14 +982,29 @@ def _performance_stats() -> str:
         ]
         
         # Connection Pool Performance
-        lines.extend([
-            "## 🔌 Connection Pool Status",
-            f"- **Pool Utilization**: {pool_stats['pool_utilization_percent']:.1f}%",
-            f"- **Active Connections**: {pool_stats['active_connections']}/{pool_stats['max_connections']}",
-            f"- **Available Connections**: {pool_stats['available_connections']}",
-            f"- **Health Check Cache**: {pool_stats['health_check_interval_seconds']}s TTL",
-            "",
-        ])
+        lines.extend(["## 🔌 Connection Pool Status", ""])
+        if len(pool_stats_by_workspace) == 1:
+            (ws, pool_stats) = next(iter(pool_stats_by_workspace.items()))
+            lines.extend([
+                f"- **Workspace**: {ws}",
+                f"- **Pool Utilization**: {pool_stats['pool_utilization_percent']:.1f}%",
+                f"- **Active Connections**: {pool_stats['active_connections']}/{pool_stats['max_connections']}",
+                f"- **Available Connections**: {pool_stats['available_connections']}",
+                f"- **Health Check Cache**: {pool_stats['health_check_interval_seconds']}s TTL",
+                "",
+            ])
+        else:
+            lines.extend([
+                "| Workspace | Utilization | Active | Available | Health TTL (s) |",
+                "|----------|------------:|-------:|----------:|---------------:|",
+            ])
+            for ws, pool_stats in sorted(pool_stats_by_workspace.items()):
+                lines.append(
+                    f"| {ws} | {pool_stats['pool_utilization_percent']:.1f}% | "
+                    f"{pool_stats['active_connections']}/{pool_stats['max_connections']} | "
+                    f"{pool_stats['available_connections']} | {pool_stats['health_check_interval_seconds']} |"
+                )
+            lines.append("")
         
         # Cache Performance Summary
         cache_hit_rate = cache_stats.get('hit_rate_percent', 0)
@@ -1087,7 +1123,7 @@ def _performance_stats() -> str:
 
 
 @mcp.tool()
-def performance_stats(random_string: str = "dummy") -> str:
+def performance_stats(random_string: str = "dummy", workspace: Optional[str] = None) -> str:
     """
     Get comprehensive system performance statistics and health metrics.
     
@@ -1099,7 +1135,7 @@ def performance_stats(random_string: str = "dummy") -> str:
     Returns:
         Detailed performance metrics including operation times, error rates, and system health
     """
-    return _performance_stats()
+    return _performance_stats(workspace)
 
 
 def run_server():

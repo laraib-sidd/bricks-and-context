@@ -97,19 +97,28 @@ class TestMCPServerTools:
         mock_cursor = Mock()
         mock_get_pool.return_value = mock_pool
 
-        with patch.dict("os.environ", {"MAX_RESULT_ROWS": "3", "MAX_RESULT_BYTES": "2048", "ENABLE_SQL_RETRIES": "false"}):
+        with patch.dict("os.environ", {"MAX_RESULT_ROWS": "3", "MAX_RESULT_BYTES": "32768", "ENABLE_SQL_RETRIES": "false"}):
             with patch('src.mcp_server.mcp_server.PooledConnection') as mock_pooled_conn:
                 mock_pooled_conn.return_value.__enter__.return_value = mock_conn
                 mock_pooled_conn.return_value.__exit__.return_value = None
 
                 mock_conn.cursor.return_value = mock_cursor
                 mock_cursor.description = [('id',), ('txt',)]
-                # Return more rows than allowed; implementation uses fetchmany.
-                mock_cursor.fetchmany.side_effect = [
-                    [(1, "a"), (2, "b")],
-                    [(3, "c"), (4, "d")],
-                    [],
-                ]
+
+                # Smarter mock that respects the size argument
+                def smart_fetchmany(size=200):
+                    # Return rows respecting the requested size
+                    all_rows = [(1, "a"), (2, "b"), (3, "c"), (4, "d"), (5, "e")]
+                    # Track how many we've returned
+                    if not hasattr(smart_fetchmany, 'offset'):
+                        smart_fetchmany.offset = 0
+                    start = smart_fetchmany.offset
+                    end = start + size
+                    result = all_rows[start:end]
+                    smart_fetchmany.offset = end
+                    return result
+
+                mock_cursor.fetchmany.side_effect = smart_fetchmany
 
                 result = mcp_server._execute_sql_query("SELECT id, txt FROM t")
 
@@ -243,8 +252,8 @@ class TestMCPServerTools:
         assert "| id | name | email |" in result
         assert "| 1 | John | john@example.com |" in result
         
-        # Verify mock was called correctly
-        mock_execute_sql.assert_called_once_with("SELECT * FROM sales_db.customers LIMIT 3")
+        # Verify mock was called correctly (now includes workspace parameter)
+        mock_execute_sql.assert_called_once_with("SELECT * FROM sales_db.customers LIMIT 3", None)
 
     @patch('src.mcp_server.mcp_server._get_table_sample')
     def test_get_table_sample_limit_enforcement(self, mock_get_table_sample):
@@ -256,10 +265,14 @@ class TestMCPServerTools:
         # We can verify this by checking the SQL query that would be generated
         assert mock_get_table_sample.called
 
+    @patch('src.mcp_server.mcp_server.get_pool')
     @patch('src.mcp_server.mcp_server._execute_sql_query')
-    def test_connection_health_healthy(self, mock_execute_sql):
+    @patch('src.mcp_server.mcp_server.resolve_workspace_name')
+    def test_connection_health_healthy(self, mock_resolve_ws, mock_execute_sql, mock_get_pool):
         """Test connection health check when connection is healthy"""
         # Setup mock for successful health check
+        mock_resolve_ws.return_value = "default"
+        mock_get_pool.return_value = Mock()
         mock_execute_sql.return_value = "Query Results (1 rows):\n\n| health_check |\n| --- |\n| 1 |"
         
         # Execute test
@@ -269,13 +282,17 @@ class TestMCPServerTools:
         assert "✅ Connection Health: HEALTHY" in result
         assert "Databricks connection pool is working correctly" in result
         
-        # Verify mock was called correctly
-        mock_execute_sql.assert_called_once_with("SELECT 1 as health_check")
+        # Verify mock was called correctly (now includes workspace parameter)
+        mock_execute_sql.assert_called_once_with("SELECT 1 as health_check", "default")
 
+    @patch('src.mcp_server.mcp_server.get_pool')
     @patch('src.mcp_server.mcp_server._execute_sql_query')
-    def test_connection_health_unhealthy(self, mock_execute_sql):
+    @patch('src.mcp_server.mcp_server.resolve_workspace_name')
+    def test_connection_health_unhealthy(self, mock_resolve_ws, mock_execute_sql, mock_get_pool):
         """Test connection health check when connection fails"""
         # Setup mock for failed health check
+        mock_resolve_ws.return_value = "default"
+        mock_get_pool.return_value = Mock()
         mock_execute_sql.return_value = "Error executing query: Connection timeout"
         
         # Execute test

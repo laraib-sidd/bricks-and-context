@@ -27,7 +27,7 @@ class TestDatabricksJobManager:
     def test_job_manager_initialization(self):
         """Test that job manager initializes correctly with environment variables."""
         with patch('src.mcp_server.job_manager.log_databricks_event'):
-            manager = DatabricksJobManager()
+            manager = DatabricksJobManager(host="test-workspace.cloud.databricks.com", token="test-token")
             
             assert manager.host == 'test-workspace.cloud.databricks.com'
             assert manager.token == 'test-token'
@@ -39,7 +39,7 @@ class TestDatabricksJobManager:
     def test_job_manager_missing_credentials(self):
         """Test that job manager raises error when credentials are missing."""
         with pytest.raises(ValueError, match="DATABRICKS_HOST and DATABRICKS_TOKEN must be set"):
-            DatabricksJobManager()
+            DatabricksJobManager(host="", token="")
     
     @patch.dict('os.environ', {
         'DATABRICKS_HOST': 'https://test-workspace.cloud.databricks.com',
@@ -48,7 +48,7 @@ class TestDatabricksJobManager:
     def test_job_manager_removes_https_prefix(self):
         """Test that job manager removes https:// prefix from host."""
         with patch('src.mcp_server.job_manager.log_databricks_event'):
-            manager = DatabricksJobManager()
+            manager = DatabricksJobManager(host="https://test-workspace.cloud.databricks.com", token="test-token")
             assert manager.host == 'test-workspace.cloud.databricks.com'
     
     @patch.dict('os.environ', {
@@ -84,7 +84,7 @@ class TestDatabricksJobManager:
         }
         mock_session.request.return_value = mock_response
         
-        manager = DatabricksJobManager()
+        manager = DatabricksJobManager(host="test-workspace.cloud.databricks.com", token="test-token")
         jobs = manager.list_jobs(limit=10)
         
         assert len(jobs) == 1
@@ -133,7 +133,7 @@ class TestDatabricksJobManager:
         }
         mock_session.request.return_value = mock_response
         
-        manager = DatabricksJobManager()
+        manager = DatabricksJobManager(host="test-workspace.cloud.databricks.com", token="test-token")
         details = manager.get_job_details(123)
         
         assert details["job_id"] == 123
@@ -173,7 +173,7 @@ class TestDatabricksJobManager:
         }
         mock_session.request.return_value = mock_response
 
-        manager = DatabricksJobManager()
+        manager = DatabricksJobManager(host="test-workspace.cloud.databricks.com", token="test-token")
         details = manager.get_job_details(999)
 
         assert details["job_type"] == "MULTI_TASK"
@@ -199,7 +199,7 @@ class TestDatabricksJobManager:
         mock_response.json.return_value = {"run_id": 456789}
         mock_session.request.return_value = mock_response
         
-        manager = DatabricksJobManager()
+        manager = DatabricksJobManager(host="test-workspace.cloud.databricks.com", token="test-token")
         run_id = manager.trigger_job(123, notebook_params={"param1": "value1"})
         
         assert run_id == 456789
@@ -226,7 +226,7 @@ class TestDatabricksJobManager:
         mock_response.json.return_value = {}
         mock_session.request.return_value = mock_response
         
-        manager = DatabricksJobManager()
+        manager = DatabricksJobManager(host="test-workspace.cloud.databricks.com", token="test-token")
         result = manager.cancel_job_run(456789)
         
         assert result is True
