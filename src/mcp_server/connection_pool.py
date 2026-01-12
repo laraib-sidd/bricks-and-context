@@ -17,6 +17,7 @@ from .logger import log_databricks_event, logger
 from .cache_manager import cache_health_status, get_cached_health_status, get_cache_manager
 from .performance_monitor import get_performance_monitor, record_operation
 from .error_handler import with_databricks_retry
+from .config import get_setting_int
 from .workspaces import get_workspace_config, resolve_workspace_name
 
 # Load environment variables from .env file
@@ -334,8 +335,8 @@ def get_pool(workspace: Optional[str] = None) -> ConnectionPool:
             return _connection_pools[workspace_name]
 
         cfg = get_workspace_config(workspace_name)
-        max_conn = int(os.getenv("MAX_CONNECTIONS", "10"))
-        health_interval = int(os.getenv("HEALTH_CHECK_CACHE_TTL", "300"))  # seconds
+        max_conn = get_setting_int("MAX_CONNECTIONS", "max_connections", 10)
+        health_interval = get_setting_int("HEALTH_CHECK_CACHE_TTL", "health_check_cache_ttl", 300)
         _connection_pools[workspace_name] = ConnectionPool(
             host=cfg.host,
             token=cfg.token,

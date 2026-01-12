@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from .logger import log_databricks_event, logger
+from .config import get_setting_int
 from .error_handler import with_databricks_retry
 from .workspaces import get_workspace_config, resolve_workspace_name
 
@@ -82,7 +83,7 @@ class DatabricksJobManager:
             "Content-Type": "application/json"
         }
         self._session = requests.Session()
-        self._timeout_seconds = int(os.getenv("DATABRICKS_API_TIMEOUT_SECONDS", "30"))
+        self._timeout_seconds = get_setting_int("DATABRICKS_API_TIMEOUT_SECONDS", "databricks_api_timeout_seconds", 30)
         
         log_databricks_event("JOBS", "INIT", f"[{self.workspace_name}] Job manager initialized for {self.host}")
     

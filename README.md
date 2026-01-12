@@ -121,10 +121,12 @@ graph TB
 
 3. **Configure environment**
    ```bash
-   # Recommended: split auth vs tuning
-   cp env.auth.template .env
-   # Optional: append tuning knobs you care about
-   cat env.tuning.template >> .env
+   # Recommended:
+   cp auth.template.yaml auth.yaml
+   cp config.template.json config.json
+
+   # Optional: if you prefer env vars, copy env.template to .env
+   # cp env.template .env
    ```
 
 4. **Test the connection** (optional)
@@ -147,19 +149,17 @@ This server runs over **stdio**, which is the format Cursor expects for MCP serv
 ### Multi-workspace support
 
 All Databricks tools now accept an optional `workspace` parameter. If omitted, the server uses:
-- `DEFAULT_WORKSPACE` when using multi-workspace JSON config
+- `default_workspace` from `auth.yaml` (recommended)
+- `DEFAULT_WORKSPACE` when using multi-workspace JSON env config
 - `default` when using legacy single-workspace env vars
 
 #### Configure multiple workspaces
 
-Set `DATABRICKS_WORKSPACES_JSON` to a JSON array:
+Recommended: configure `auth.yaml`:
 
 ```bash
-DATABRICKS_WORKSPACES_JSON='[
-  {"name":"prod","host":"your-prod.cloud.databricks.com","token":"dapi...","http_path":"/sql/1.0/warehouses/abc"},
-  {"name":"dev","host":"your-dev.cloud.databricks.com","token":"dapi...","http_path":"/sql/1.0/warehouses/def"}
-]'
-DEFAULT_WORKSPACE=dev
+cp auth.template.yaml auth.yaml
+# edit auth.yaml
 ```
 
 Then call tools like:

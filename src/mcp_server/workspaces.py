@@ -4,13 +4,24 @@ Workspace configuration support.
 Goal: allow configuring multiple Databricks workspaces while remaining backwards-compatible
 with the legacy single-workspace env vars.
 
-Supported env formats:
+Supported formats:
+1) YAML auth file (recommended):
+   - MCP_AUTH_PATH=./auth.yaml (default)
+   - auth.yaml:
+       default_workspace: dev   # optional
+       workspaces:
+         - name: prod
+           host: ...
+           token: ...
+           http_path: ...
+
+2) Multiple workspaces via JSON env:
 1) Legacy single workspace:
    - DATABRICKS_HOST
    - DATABRICKS_TOKEN
    - DATABRICKS_HTTP_PATH
 
-2) Multiple workspaces via JSON:
+3) Multiple workspaces via JSON:
    - DATABRICKS_WORKSPACES_JSON='[{"name":"prod","host":"...","token":"...","http_path":"..."}, ...]'
    - DEFAULT_WORKSPACE='prod' (optional; defaults to first entry)
 """
@@ -21,6 +32,8 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+
+import yaml
 
 
 @dataclass(frozen=True)
@@ -81,6 +94,51 @@ def _load_multi_workspace_configs() -> Optional[Dict[str, WorkspaceConfig]]:
     return configs
 
 
+def _auth_path() -> str:
+    return os.getenv("MCP_AUTH_PATH", "auth.yaml")
+
+
+def _load_yaml_configs() -> Optional[Dict[str, WorkspaceConfig]]:
+    path = _auth_path()
+    if not os.path.exists(path):
+        return None
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a YAML mapping/object")
+
+    workspaces_data = data.get("workspaces")
+    if not isinstance(workspaces_data, list) or not workspaces_data:
+        raise ValueError(f"{path} must include a non-empty 'workspaces' list")
+
+    configs: Dict[str, WorkspaceConfig] = {}
+    for i, item in enumerate(workspaces_data):
+        if not isinstance(item, dict):
+            raise ValueError(f"{path}: workspaces[{i}] must be a mapping/object")
+
+        name = str(item.get("name") or "").strip()
+        host = str(item.get("host") or "").strip()
+        token = str(item.get("token") or "").strip()
+        http_path = str(item.get("http_path") or "").strip()
+
+        if not all([name, host, token, http_path]):
+            raise ValueError(f"{path}: workspaces[{i}] must include name, host, token, http_path")
+
+        if name in configs:
+            raise ValueError(f"{path}: duplicate workspace name: {name}")
+
+        configs[name] = WorkspaceConfig(
+            name=name,
+            host=_strip_scheme(host),
+            token=token,
+            http_path=http_path,
+        )
+
+    return configs
+
+
 def _load_legacy_default() -> Optional[WorkspaceConfig]:
     host = os.getenv("DATABRICKS_HOST")
     token = os.getenv("DATABRICKS_TOKEN")
@@ -101,6 +159,10 @@ def _load_legacy_default() -> Optional[WorkspaceConfig]:
 
 def get_workspaces() -> Dict[str, WorkspaceConfig]:
     """Return all configured workspaces."""
+    yaml_cfg = _load_yaml_configs()
+    if yaml_cfg is not None:
+        return yaml_cfg
+
     multi = _load_multi_workspace_configs()
     if multi is not None:
         return multi
@@ -113,6 +175,19 @@ def get_workspaces() -> Dict[str, WorkspaceConfig]:
 
 def get_default_workspace_name() -> str:
     """Return the default workspace name to use when tools omit workspace."""
+    yaml_cfg = _load_yaml_configs()
+    if yaml_cfg is not None:
+        # Prefer YAML's default_workspace if present
+        path = _auth_path()
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        requested = str((data or {}).get("default_workspace") or "").strip()
+        if requested:
+            if requested not in yaml_cfg:
+                raise ValueError(f"{path}: default_workspace '{requested}' is not in workspaces")
+            return requested
+        return next(iter(yaml_cfg.keys()))
+
     multi = _load_multi_workspace_configs()
     if multi is None:
         return "default"

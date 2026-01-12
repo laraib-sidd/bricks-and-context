@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
+from .config import get_setting_bool, get_setting_int
 from .cache_manager import get_cached_query_result, cache_query_result, get_cache_stats
 from .connection_pool import PooledConnection, get_pool
 from .error_handler import with_databricks_retry
@@ -57,7 +58,7 @@ def _execute_sql_query(sql: str, workspace: Optional[str] = None) -> str:
 
     workspace_name = resolve_workspace_name(workspace)
 
-    allow_write = os.getenv("ALLOW_WRITE_QUERIES", "false").strip().lower() in {"1", "true", "yes"}
+    allow_write = get_setting_bool("ALLOW_WRITE_QUERIES", "allow_write_queries", False)
     if not allow_write and not _is_read_only_sql(sql_stripped):
         return (
             "Error executing query: only read-only queries are allowed by default.\n\n"
@@ -65,19 +66,19 @@ def _execute_sql_query(sql: str, workspace: Optional[str] = None) -> str:
             f"Query: {sql}"
         )
 
-    max_rows = int(os.getenv("MAX_RESULT_ROWS", "200"))
+    max_rows = get_setting_int("MAX_RESULT_ROWS", "max_result_rows", 200)
     max_rows = min(max(max_rows, 1), 5000)
 
-    max_bytes = int(os.getenv("MAX_RESULT_BYTES", str(256 * 1024)))
+    max_bytes = get_setting_int("MAX_RESULT_BYTES", "max_result_bytes", 256 * 1024)
     max_bytes = min(max(max_bytes, 32 * 1024), 5 * 1024 * 1024)
 
-    max_cell_chars = int(os.getenv("MAX_CELL_CHARS", "200"))
+    max_cell_chars = get_setting_int("MAX_CELL_CHARS", "max_cell_chars", 200)
     max_cell_chars = min(max(max_cell_chars, 20), 2000)
 
-    enable_query_cache = os.getenv("ENABLE_QUERY_CACHE", "false").strip().lower() in {"1", "true", "yes"}
-    cache_ttl = int(os.getenv("QUERY_CACHE_TTL_SECONDS", "300"))
+    enable_query_cache = get_setting_bool("ENABLE_QUERY_CACHE", "enable_query_cache", False)
+    cache_ttl = get_setting_int("QUERY_CACHE_TTL_SECONDS", "query_cache_ttl_seconds", 300)
     cache_ttl = min(max(cache_ttl, 30), 3600)
-    enable_sql_retries = os.getenv("ENABLE_SQL_RETRIES", "true").strip().lower() in {"1", "true", "yes"}
+    enable_sql_retries = get_setting_bool("ENABLE_SQL_RETRIES", "enable_sql_retries", True)
 
     normalized = _normalize_sql_for_cache(sql_stripped)
     sql_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
