@@ -1,7 +1,11 @@
 import pytest
 import os
 
-from src.mcp_server.workspaces import get_workspace_config, get_workspaces, resolve_workspace_name
+from src.mcp_server.workspaces import (
+    get_workspace_config,
+    get_workspaces,
+    resolve_workspace_name,
+)
 
 
 def test_legacy_single_workspace_env(monkeypatch, tmp_path):
@@ -73,4 +77,3 @@ def test_yaml_auth_file(tmp_path, monkeypatch):
     assert resolve_workspace_name(None) == "dev"
     cfg = get_workspace_config("prod")
     assert cfg.host == "p.databricks.com"
-

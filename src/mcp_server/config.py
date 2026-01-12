@@ -76,4 +76,3 @@ def get_setting_bool(env_key: str, config_key: str, default: bool) -> bool:
     if v is not None and v != "":
         return _truthy(v)
     return bool(get_config_value(config_key, default))
-
