@@ -9,7 +9,7 @@ description = "A Model Context Protocol (MCP) server for AI solutions to communi
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-    {name = "Databricks MCP Team", email = "mcp@example.com"}
+    {name = "Laraib Siddiqui", email = "laraib.siddiqui@databricks.com"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -22,7 +22,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "databricks-sql-connector>=3.0.0,<4.0.0",
+    "databricks-sql-connector[pyarrow]>=3.0.0,<4.0.0",
     "python-dotenv>=1.0.0,<2.0.0",
     "fastmcp>=2.0.0,<3.0.0",
     "requests>=2.25.0,<3.0.0",
