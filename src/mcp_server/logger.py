@@ -86,7 +86,7 @@ def get_logger(name: str = "mcp_databricks_server") -> logging.Logger:
 logger = setup_logger()
 
 
-def log_connection_event(event_type: str, details: str, level: str = "INFO"):
+def log_connection_event(event_type: str, details: str, level: str = "INFO") -> None:
     """
     Log connection-related events with consistent formatting.
 
@@ -99,7 +99,9 @@ def log_connection_event(event_type: str, details: str, level: str = "INFO"):
     logger.log(log_level, f"🔗 CONNECTION {event_type}: {details}")
 
 
-def log_mcp_event(tool_name: str, event_type: str, details: str, level: str = "INFO"):
+def log_mcp_event(
+    tool_name: str, event_type: str, details: str, level: str = "INFO"
+) -> None:
     """
     Log MCP tool execution events with consistent formatting.
 
@@ -115,7 +117,7 @@ def log_mcp_event(tool_name: str, event_type: str, details: str, level: str = "I
 
 def log_databricks_event(
     operation: str, event_type: str, details: str, level: str = "INFO"
-):
+) -> None:
     """
     Log Databricks API operation events with consistent formatting.
 
@@ -129,7 +131,7 @@ def log_databricks_event(
     logger.log(log_level, f"🧱 DATABRICKS {operation} {event_type}: {details}")
 
 
-def log_server_event(event_type: str, details: str, level: str = "INFO"):
+def log_server_event(event_type: str, details: str, level: str = "INFO") -> None:
     """
     Log server lifecycle events with consistent formatting.
 

@@ -90,7 +90,7 @@ class ConnectionPool:
         start_time = time.time()
 
         try:
-            connection = connect(
+            connection: Connection = connect(
                 server_hostname=self.host,
                 http_path=self.http_path,
                 access_token=self.token,
@@ -219,10 +219,10 @@ class ConnectionPool:
             if self._created_connections < self.max_connections:
                 self._created_connections += 1
                 try:
-                    connection = self._create_connection()
+                    new_conn: Connection = self._create_connection()
                     duration_ms = (time.time() - start_time) * 1000
                     record_operation("get_connection_new", duration_ms, True)
-                    return connection
+                    return new_conn
                 except Exception as e:
                     self._created_connections -= 1
                     raise
@@ -414,7 +414,9 @@ class PooledConnection:
         self.connection = self.pool.get_connection()
         return self.connection
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Any
+    ) -> None:
         if self.connection:
             self.pool.return_connection(self.connection)
 

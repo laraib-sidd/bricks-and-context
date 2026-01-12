@@ -37,9 +37,9 @@ class RetryConfig:
     max_delay_seconds: float = 60.0
     exponential_base: float = 2.0
     jitter: bool = True
-    retryable_errors: List[ErrorType] = None
+    retryable_errors: Optional[List[ErrorType]] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.retryable_errors is None:
             self.retryable_errors = [
                 ErrorType.NETWORK,
@@ -104,7 +104,7 @@ class CircuitBreaker:
         """Check if execution is allowed."""
         return self.state != CircuitBreakerState.OPEN
 
-    def record_success(self):
+    def record_success(self) -> None:
         """Record a successful operation."""
         with self._lock:
             if self._state == CircuitBreakerState.HALF_OPEN:
@@ -120,7 +120,7 @@ class CircuitBreaker:
             elif self._state == CircuitBreakerState.CLOSED:
                 self._failure_count = 0  # Reset failure count on success
 
-    def record_failure(self):
+    def record_failure(self) -> None:
         """Record a failed operation."""
         with self._lock:
             self._failure_count += 1
@@ -160,7 +160,7 @@ class ErrorHandler:
     Comprehensive error handling with retry logic and circuit breakers.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._circuit_breakers: Dict[str, CircuitBreaker] = {}
         self._lock = threading.RLock()
 
@@ -203,7 +203,8 @@ class ErrorHandler:
     def is_retryable(self, error: Exception, retry_config: RetryConfig) -> bool:
         """Determine if an error is retryable based on classification."""
         error_type = self.classify_error(error)
-        return error_type in retry_config.retryable_errors
+        retryable = retry_config.retryable_errors or []
+        return error_type in retryable
 
     def calculate_delay(self, attempt: int, config: RetryConfig) -> float:
         """Calculate delay for retry attempt with exponential backoff and jitter."""
@@ -238,7 +239,7 @@ class ErrorHandler:
         operation_name: str,
         config: Optional[RetryConfig] = None,
         circuit_breaker: bool = True,
-    ):
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """
         Decorator for adding retry logic and circuit breaker to operations.
 
@@ -248,9 +249,9 @@ class ErrorHandler:
             circuit_breaker: Whether to use circuit breaker pattern
         """
 
-        def decorator(func: Callable) -> Callable:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             @functools.wraps(func)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
                 retry_config = config or self.default_retry_config
                 circuit = (
                     self.get_circuit_breaker(operation_name)
@@ -335,7 +336,9 @@ class ErrorHandler:
                     "ERROR",
                 )
 
-                raise last_error
+                if last_error is not None:
+                    raise last_error
+                raise RuntimeError(f"{operation_name} failed with unknown error")
 
             return wrapper
 
@@ -377,7 +380,7 @@ def with_retry(
     max_attempts: int = 3,
     base_delay: float = 1.0,
     use_circuit_breaker: bool = True,
-):
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Convenience decorator for adding retry logic.
 
@@ -393,7 +396,9 @@ def with_retry(
     return error_handler.with_retry(operation_name, config, use_circuit_breaker)
 
 
-def with_databricks_retry(operation_name: str):
+def with_databricks_retry(
+    operation_name: str,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator with Databricks-optimized retry configuration."""
     config = RetryConfig(
         max_attempts=3,

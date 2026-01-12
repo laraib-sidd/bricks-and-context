@@ -88,7 +88,7 @@ class PerformanceMonitor:
         self._lock = threading.RLock()
         self._max_metrics = max_metrics
         self._metrics: deque[ExecutionMetric] = deque(maxlen=max_metrics)
-        self._operation_stats = defaultdict(dict)
+        self._operation_stats: Dict[str, Dict[str, Any]] = defaultdict(dict)
         self._start_time = time.time()
 
         logger.info(f"Performance monitor initialized (max metrics: {max_metrics})")
@@ -99,7 +99,7 @@ class PerformanceMonitor:
         duration_ms: float,
         success: bool = True,
         error_message: Optional[str] = None,
-    ):
+    ) -> None:
         """Record a completed operation metric."""
         now = time.time()
         start_time = now - (duration_ms / 1000)
@@ -177,7 +177,7 @@ def record_operation(
     duration_ms: float,
     success: bool = True,
     error: Optional[str] = None,
-):
+) -> None:
     """Record a completed operation metric."""
     monitor = get_performance_monitor()
     monitor.record_operation(operation, duration_ms, success, error)

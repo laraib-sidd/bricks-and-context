@@ -158,7 +158,7 @@ class DatabricksJobManager:
                 return {}
 
             try:
-                result = response.json()
+                result: Dict[str, Any] = response.json()
             except ValueError:
                 # Non-JSON response (rare). Return raw text.
                 result = {"raw": response.text}
@@ -352,7 +352,7 @@ class DatabricksJobManager:
             Run ID of the triggered job
         """
         try:
-            data = {"job_id": job_id}
+            data: Dict[str, Any] = {"job_id": job_id}
 
             if job_parameters:
                 data["job_parameters"] = job_parameters
@@ -364,7 +364,7 @@ class DatabricksJobManager:
                 data["python_params"] = python_params
 
             response = self._make_request("POST", "/jobs/run-now", data=data)
-            run_id = response["run_id"]
+            run_id: int = response["run_id"]
 
             log_databricks_event(
                 "JOBS", "TRIGGER", f"Started job {job_id}, run ID: {run_id}"

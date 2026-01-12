@@ -13,7 +13,7 @@ from fastmcp import FastMCP
 from .config import get_setting_bool, get_setting_int
 from .cache_manager import get_cached_query_result, cache_query_result, get_cache_stats
 from .connection_pool import PooledConnection, get_pool
-from .error_handler import with_databricks_retry
+from .error_handler import with_databricks_retry, get_error_handler
 from .job_manager import get_job_manager
 from .logger import log_mcp_event
 from .performance_monitor import get_performance_stats
@@ -21,7 +21,7 @@ from .workspaces import get_workspaces, resolve_workspace_name
 
 
 # Create FastMCP server instance optimized for AI solutions
-mcp = FastMCP("bricks-and-context")
+mcp: FastMCP = FastMCP("bricks-and-context")
 
 
 # Core functions (testable without MCP decorators)
@@ -1311,7 +1311,7 @@ def performance_stats(
     return _performance_stats(workspace)
 
 
-def run_server():
+def run_server() -> None:
     """
     Run the MCP server with stdio transport (recommended for AI integrations)
     """

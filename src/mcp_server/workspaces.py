@@ -153,6 +153,11 @@ def _load_legacy_default() -> Optional[WorkspaceConfig]:
     if not all([host, token, http_path]):
         raise ValueError("Missing required Databricks credentials in environment")
 
+    # At this point all values are guaranteed non-None by the check above
+    assert host is not None
+    assert token is not None
+    assert http_path is not None
+
     return WorkspaceConfig(
         name="default",
         host=_strip_scheme(host),

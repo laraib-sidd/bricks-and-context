@@ -250,7 +250,7 @@ class CacheManager:
             hit_rate = (self._hits / total_requests * 100) if total_requests > 0 else 0
 
             # Count entries by category
-            category_counts = {}
+            category_counts: Dict[str, int] = {}
             expired_count = 0
 
             for key, entry in self._cache.items():
