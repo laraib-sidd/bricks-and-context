@@ -5,14 +5,18 @@ This module provides comprehensive job management capabilities for AI assistants
 to interact with Databricks jobs through the REST API.
 """
 
+from __future__ import annotations
+
 import json
 import os
-import requests
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 
 from .logger import log_databricks_event, logger
+from .error_handler import with_databricks_retry
+
+import requests
 
 
 @dataclass
@@ -75,10 +79,20 @@ class DatabricksJobManager:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
+        self._session = requests.Session()
+        self._timeout_seconds = int(os.getenv("DATABRICKS_API_TIMEOUT_SECONDS", "30"))
         
         log_databricks_event("JOBS", "INIT", f"Job manager initialized for {self.host}")
     
-    def _make_request(self, method: str, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+    @with_databricks_retry("databricks_jobs_api_request")
+    def _make_request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """
         Make a request to the Databricks API.
         
@@ -96,27 +110,46 @@ class DatabricksJobManager:
         url = f"{self.base_url}{endpoint}"
         
         try:
-            log_databricks_event("JOBS", "REQUEST", f"{method} {endpoint}")
-            
-            if method == "GET":
-                response = requests.get(url, headers=self.headers, timeout=30)
-            elif method == "POST":
-                response = requests.post(url, headers=self.headers, json=data, timeout=30)
-            elif method == "DELETE":
-                response = requests.delete(url, headers=self.headers, timeout=30)
-            else:
+            method_upper = method.upper()
+            if method_upper not in {"GET", "POST", "DELETE"}:
                 raise ValueError(f"Unsupported HTTP method: {method}")
-                
-            response.raise_for_status()
-            result = response.json() if response.content else {}
-            
-            log_databricks_event("JOBS", "SUCCESS", f"{method} {endpoint} - Status: {response.status_code}")
+
+            log_databricks_event("JOBS", "REQUEST", f"{method_upper} {endpoint}")
+            response = self._session.request(
+                method_upper,
+                url,
+                headers=self.headers,
+                params=params,
+                json=data,
+                timeout=self._timeout_seconds,
+            )
+
+            # Improve error messages: include status + small body snippet.
+            if response.status_code >= 400:
+                body = (response.text or "").strip()
+                if len(body) > 2000:
+                    body = body[:2000] + "…"
+                # Make rate limits visible to retry classifier.
+                if response.status_code == 429:
+                    raise Exception(f"rate limit: HTTP 429 from Databricks Jobs API: {body}")
+                raise Exception(f"databricks api error: HTTP {response.status_code} from Jobs API: {body}")
+
+            if not response.content:
+                log_databricks_event("JOBS", "SUCCESS", f"{method_upper} {endpoint} - Status: {response.status_code}")
+                return {}
+
+            try:
+                result = response.json()
+            except ValueError:
+                # Non-JSON response (rare). Return raw text.
+                result = {"raw": response.text}
+
+            log_databricks_event("JOBS", "SUCCESS", f"{method_upper} {endpoint} - Status: {response.status_code}")
             return result
-            
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             error_msg = f"API request failed: {e}"
             log_databricks_event("JOBS", "ERROR", error_msg, "ERROR")
-            raise Exception(error_msg)
+            raise
     
     def list_jobs(self, limit: int = 25, name_filter: Optional[str] = None) -> List[JobInfo]:
         """
@@ -133,16 +166,11 @@ class DatabricksJobManager:
             # Limit the number of results to prevent overwhelming responses
             limit = min(limit, 100)
             
-            params = {"limit": limit}
+            params: Dict[str, Any] = {"limit": limit}
             if name_filter:
                 params["name"] = name_filter
-                
-            endpoint = "/jobs/list"
-            if params:
-                param_str = "&".join([f"{k}={v}" for k, v in params.items()])
-                endpoint += f"?{param_str}"
-                
-            response = self._make_request("GET", endpoint)
+
+            response = self._make_request("GET", "/jobs/list", params=params)
             
             jobs = []
             for job_data in response.get("jobs", []):
@@ -187,12 +215,13 @@ class DatabricksJobManager:
             Detailed job information
         """
         try:
-            response = self._make_request("GET", f"/jobs/get?job_id={job_id}")
+            response = self._make_request("GET", "/jobs/get", params={"job_id": job_id})
             
             job_data = response
             settings = job_data.get("settings", {})
             
             # Format the response for AI consumption
+            tasks, task_summary = self._extract_tasks_info(settings)
             details = {
                 "job_id": job_data["job_id"],
                 "name": settings.get("name", f"Job {job_id}"),
@@ -201,7 +230,11 @@ class DatabricksJobManager:
                 "job_type": self._determine_job_type(settings),
                 "schedule": self._extract_schedule_info(settings),
                 "cluster_config": self._extract_cluster_info(settings),
+                # Backwards-compatible single-task view
                 "task_config": self._extract_task_info(settings),
+                # Multi-task view
+                "tasks": tasks,
+                "task_summary": task_summary,
                 "timeout_seconds": settings.get("timeout_seconds"),
                 "max_concurrent_runs": settings.get("max_concurrent_runs", 1),
                 "email_notifications": settings.get("email_notifications", {}),
@@ -231,14 +264,11 @@ class DatabricksJobManager:
         try:
             limit = min(limit, 100)
             
-            params = {"job_id": job_id, "limit": limit}
+            params: Dict[str, Any] = {"job_id": job_id, "limit": limit}
             if active_only:
                 params["active_only"] = "true"
-                
-            param_str = "&".join([f"{k}={v}" for k, v in params.items()])
-            endpoint = f"/jobs/runs/list?{param_str}"
-            
-            response = self._make_request("GET", endpoint)
+
+            response = self._make_request("GET", "/jobs/runs/list", params=params)
             
             runs = []
             for run_data in response.get("runs", []):
@@ -265,8 +295,15 @@ class DatabricksJobManager:
             log_databricks_event("JOBS", "ERROR", f"Failed to get runs for job {job_id}: {e}", "ERROR")
             raise
     
-    def trigger_job(self, job_id: int, notebook_params: Optional[Dict] = None, 
-                   jar_params: Optional[List] = None, python_params: Optional[List] = None) -> int:
+    def trigger_job(
+        self,
+        job_id: int,
+        *,
+        job_parameters: Optional[Dict[str, Any]] = None,
+        notebook_params: Optional[Dict[str, Any]] = None,
+        jar_params: Optional[List[Any]] = None,
+        python_params: Optional[List[Any]] = None,
+    ) -> int:
         """
         Trigger a job run.
         
@@ -282,6 +319,8 @@ class DatabricksJobManager:
         try:
             data = {"job_id": job_id}
             
+            if job_parameters:
+                data["job_parameters"] = job_parameters
             if notebook_params:
                 data["notebook_params"] = notebook_params
             if jar_params:
@@ -289,7 +328,7 @@ class DatabricksJobManager:
             if python_params:
                 data["python_params"] = python_params
             
-            response = self._make_request("POST", "/jobs/run-now", data)
+            response = self._make_request("POST", "/jobs/run-now", data=data)
             run_id = response["run_id"]
             
             log_databricks_event("JOBS", "TRIGGER", f"Started job {job_id}, run ID: {run_id}")
@@ -311,7 +350,7 @@ class DatabricksJobManager:
         """
         try:
             data = {"run_id": run_id}
-            self._make_request("POST", "/jobs/runs/cancel", data)
+            self._make_request("POST", "/jobs/runs/cancel", data=data)
             
             log_databricks_event("JOBS", "CANCEL", f"Cancelled job run {run_id}")
             return True
@@ -331,7 +370,7 @@ class DatabricksJobManager:
             Job run output and metadata
         """
         try:
-            response = self._make_request("GET", f"/jobs/runs/get-output?run_id={run_id}")
+            response = self._make_request("GET", "/jobs/runs/get-output", params={"run_id": run_id})
             
             # Format for AI consumption
             output = {
@@ -353,6 +392,8 @@ class DatabricksJobManager:
     
     def _determine_job_type(self, settings: Dict) -> str:
         """Determine the type of job based on its settings."""
+        if isinstance(settings.get("tasks"), list) and settings.get("tasks"):
+            return "MULTI_TASK"
         if "notebook_task" in settings:
             return "NOTEBOOK"
         elif "spark_jar_task" in settings:
@@ -383,6 +424,13 @@ class DatabricksJobManager:
     
     def _extract_cluster_info(self, settings: Dict) -> Dict:
         """Extract cluster configuration information."""
+        if isinstance(settings.get("tasks"), list) and settings.get("tasks"):
+            # Multi-task jobs: capture high-level cluster model (job_clusters + per-task cluster refs)
+            job_clusters = settings.get("job_clusters", []) or []
+            return {
+                "type": "multi_task",
+                "job_clusters": job_clusters,
+            }
         if "existing_cluster_id" in settings:
             return {"type": "existing", "cluster_id": settings["existing_cluster_id"]}
         elif "new_cluster" in settings:
@@ -401,6 +449,7 @@ class DatabricksJobManager:
     
     def _extract_task_info(self, settings: Dict) -> Dict:
         """Extract task configuration information."""
+        # Backwards-compatible single-task extraction (multi-task uses _extract_tasks_info)
         task_info = {"type": self._determine_job_type(settings)}
         
         # Add specific task details based on type
@@ -424,6 +473,76 @@ class DatabricksJobManager:
             })
         
         return task_info
+
+    def _extract_tasks_info(self, settings: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+        """
+        Extract multi-task information if present.
+
+        Returns:
+            (tasks, summary)
+        """
+        tasks_data = settings.get("tasks")
+        if not isinstance(tasks_data, list) or not tasks_data:
+            return [], {}
+
+        tasks: List[Dict[str, Any]] = []
+        summary: Dict[str, int] = {}
+
+        for t in tasks_data:
+            if not isinstance(t, dict):
+                continue
+
+            task_key = t.get("task_key") or "unknown"
+
+            task_type = "UNKNOWN"
+            details: Dict[str, Any] = {}
+
+            if "notebook_task" in t:
+                task_type = "NOTEBOOK"
+                nb = t.get("notebook_task", {}) or {}
+                details["notebook_path"] = nb.get("notebook_path")
+                details["base_parameters"] = nb.get("base_parameters", {})
+            elif "spark_python_task" in t:
+                task_type = "PYTHON"
+                py = t.get("spark_python_task", {}) or {}
+                details["python_file"] = py.get("python_file")
+                details["parameters"] = py.get("parameters", [])
+            elif "spark_jar_task" in t:
+                task_type = "JAR"
+                jar = t.get("spark_jar_task", {}) or {}
+                details["main_class_name"] = jar.get("main_class_name")
+                details["parameters"] = jar.get("parameters", [])
+            elif "sql_task" in t:
+                task_type = "SQL"
+                sql_task = t.get("sql_task", {}) or {}
+                details["warehouse_id"] = sql_task.get("warehouse_id")
+                details["query"] = sql_task.get("query", {})
+            elif "pipeline_task" in t:
+                task_type = "PIPELINE"
+                pipe = t.get("pipeline_task", {}) or {}
+                details["pipeline_id"] = pipe.get("pipeline_id")
+
+            # Cluster targeting for multi-task
+            if "existing_cluster_id" in t:
+                details["cluster"] = {"type": "existing", "cluster_id": t.get("existing_cluster_id")}
+            elif "new_cluster" in t:
+                details["cluster"] = {"type": "new", **(t.get("new_cluster") or {})}
+            elif "job_cluster_key" in t:
+                details["cluster"] = {"type": "job_cluster", "key": t.get("job_cluster_key")}
+
+            tasks.append(
+                {
+                    "task_key": task_key,
+                    "type": task_type,
+                    "description": t.get("description"),
+                    "depends_on": t.get("depends_on", []),
+                    "details": details,
+                }
+            )
+
+            summary[task_type] = summary.get(task_type, 0) + 1
+
+        return tasks, summary
     
     def _format_timestamp(self, timestamp_ms: int) -> str:
         """Format timestamp for human readability."""

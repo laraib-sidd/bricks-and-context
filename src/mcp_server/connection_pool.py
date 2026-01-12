@@ -47,6 +47,9 @@ class ConnectionPool:
         self._created_connections = 0
         self._lock = threading.Lock()
         self._last_health_check = 0.0
+        # Per-connection validation cache (prevents global "healthy" from masking a bad connection)
+        self._conn_validated_at: Dict[int, float] = {}
+        self._conn_bad: Dict[int, bool] = {}
         
         # Performance monitoring
         self._monitor = get_performance_monitor()
@@ -95,10 +98,15 @@ class ConnectionPool:
         Returns:
             bool: True if connection is valid
         """
-        # Check cached health status first
-        cached_health = get_cached_health_status()
-        if cached_health and cached_health['status'] == 'healthy':
-            # Use cached health status if recent
+        conn_id = id(connection)
+
+        # If we've marked this connection as bad, don't hand it out again.
+        if self._conn_bad.get(conn_id):
+            return False
+
+        # If we validated this specific connection recently, skip re-validating.
+        last_ok = self._conn_validated_at.get(conn_id)
+        if last_ok and (time.time() - last_ok) <= self.health_check_interval:
             return True
         
         # Perform actual health check
@@ -116,9 +124,12 @@ class ConnectionPool:
             if is_healthy:
                 # Cache successful health check
                 cache_health_status("healthy", "Connection validated", self.health_check_interval)
+                self._conn_validated_at[conn_id] = time.time()
+                self._conn_bad.pop(conn_id, None)
                 record_operation("health_check", duration_ms, True)
                 log_databricks_event("CONNECTION_POOL", "HEALTH_CHECK", f"Health check passed ({duration_ms:.1f}ms)")
             else:
+                self._conn_bad[conn_id] = True
                 record_operation("health_check", duration_ms, False, "SELECT 1 returned no result")
                 
             return is_healthy
@@ -127,6 +138,7 @@ class ConnectionPool:
             duration_ms = (time.time() - start_time) * 1000
             record_operation("health_check", duration_ms, False, str(e))
             log_databricks_event("CONNECTION_POOL", "HEALTH_CHECK", f"Health check failed: {str(e)}", "WARNING")
+            self._conn_bad[conn_id] = True
             return False
 
     def get_connection(self, timeout: float = 10.0) -> Connection:
@@ -157,6 +169,10 @@ class ConnectionPool:
                 # Connection is invalid, decrement count and try creating new one
                 with self._lock:
                     self._created_connections -= 1
+                try:
+                    connection.close()
+                except Exception:
+                    pass
                     
         except Empty:
             # No connections available in pool
@@ -195,17 +211,38 @@ class ConnectionPool:
         """
         start_time = time.time()
         
+        conn_id = id(connection)
         try:
             # Validate connection before returning (uses cached health if available)
             if self._validate_connection(connection):
                 # Connection is healthy, return to pool
-                self._pool.put(connection, block=False)
+                try:
+                    self._pool.put(connection, block=False)
+                except Exception:
+                    # Pool is full; close and decrement to avoid leaks/state drift.
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+                    with self._lock:
+                        self._created_connections -= 1
+                    self._conn_validated_at.pop(conn_id, None)
+                    self._conn_bad.pop(conn_id, None)
+                    duration_ms = (time.time() - start_time) * 1000
+                    record_operation("return_connection", duration_ms, False, "Pool full; closed connection")
+                    return
                 duration_ms = (time.time() - start_time) * 1000
                 record_operation("return_connection", duration_ms, True)
             else:
                 # Connection is broken, don't return to pool
                 with self._lock:
                     self._created_connections -= 1
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                self._conn_validated_at.pop(conn_id, None)
+                self._conn_bad.pop(conn_id, None)
                 duration_ms = (time.time() - start_time) * 1000
                 record_operation("return_connection", duration_ms, False, "Connection validation failed")
                 
@@ -213,6 +250,12 @@ class ConnectionPool:
             # Error during validation, assume connection is broken
             with self._lock:
                 self._created_connections -= 1
+            try:
+                connection.close()
+            except Exception:
+                pass
+            self._conn_validated_at.pop(conn_id, None)
+            self._conn_bad.pop(conn_id, None)
             duration_ms = (time.time() - start_time) * 1000
             record_operation("return_connection", duration_ms, False, str(e))
 
