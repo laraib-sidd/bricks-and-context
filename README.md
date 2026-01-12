@@ -52,46 +52,82 @@ cp auth.template.yaml auth.yaml   # NOT committed (contains secrets)
 
 ## Cursor Setup (MCP)
 
-This server uses **stdio transport**, which Cursor expects for MCP.
+This server uses **stdio transport**. Cursor doesn't inherit your shell environment, so you must provide the full path to Python (or use `uv`) and set environment variables explicitly.
 
-### Step 1: Open Cursor Settings
+### Step 1: Install dependencies
+
+```bash
+cd /path/to/bricks-and-context
+uv sync        # creates .venv/ with all dependencies
+```
+
+### Step 2: Open Cursor MCP Settings
 
 1. Open Cursor
 2. Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows/Linux)
 3. Type **"Open MCP Settings"** and select it
 4. This opens `~/.cursor/mcp.json`
 
-### Step 2: Add the server config
+### Step 3: Add the server config
 
-Add the following to your `mcp.json` (create the file if it doesn't exist):
+Choose **one** of the options below. Replace `/path/to/bricks-and-context` with your actual repo path.
+
+#### Option A: Using `uv run` (recommended)
+
+`uv run` automatically uses the project's virtual environment:
 
 ```json
 {
   "mcpServers": {
     "bricks-and-context": {
-      "command": "python",
-      "args": ["/absolute/path/to/bricks-and-context/run_mcp_server.py"],
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/bricks-and-context",
+        "run",
+        "python",
+        "run_mcp_server.py"
+      ],
       "env": {
-        "MCP_AUTH_PATH": "/absolute/path/to/bricks-and-context/auth.yaml",
-        "MCP_CONFIG_PATH": "/absolute/path/to/bricks-and-context/config.json"
+        "MCP_AUTH_PATH": "/path/to/bricks-and-context/auth.yaml",
+        "MCP_CONFIG_PATH": "/path/to/bricks-and-context/config.json"
       }
     }
   }
 }
 ```
 
-> **Replace** `/absolute/path/to/bricks-and-context` with the actual path to this repo on your machine.
+#### Option B: Using the venv Python directly
 
-### Step 3: Restart Cursor
+Point to the Python executable inside `.venv`:
 
-Restart Cursor (or reload the window) to pick up the new MCP server.
+```json
+{
+  "mcpServers": {
+    "bricks-and-context": {
+      "command": "/path/to/bricks-and-context/.venv/bin/python",
+      "args": ["/path/to/bricks-and-context/run_mcp_server.py"],
+      "env": {
+        "MCP_AUTH_PATH": "/path/to/bricks-and-context/auth.yaml",
+        "MCP_CONFIG_PATH": "/path/to/bricks-and-context/config.json"
+      }
+    }
+  }
+}
+```
+
+> **Windows**: Use `.venv\\Scripts\\python.exe` instead of `.venv/bin/python`.
+
+### Step 4: Restart Cursor
+
+Restart Cursor (or reload the window) to load the MCP server.
 
 ### Verify
 
-Once running, you can ask the AI to use Databricks tools, e.g.:
+Once running, you can ask the AI:
 - *"List my Databricks jobs"*
 - *"Run SELECT 1 on Databricks"*
-- *"Describe the schema of my_catalog.my_schema.my_table"*
+- *"Describe the table my_catalog.my_schema.my_table"*
 
 ## Multi-workspace
 
