@@ -121,8 +121,10 @@ graph TB
 
 3. **Configure environment**
    ```bash
-   cp env.template .env
-   # Edit .env with your Databricks credentials
+   # Recommended: split auth vs tuning
+   cp env.auth.template .env
+   # Optional: append tuning knobs you care about
+   cat env.tuning.template >> .env
    ```
 
 4. **Test the connection** (optional)
@@ -134,6 +136,35 @@ graph TB
    ```bash
    python run_mcp_server.py
    ```
+
+## Cursor Setup (MCP)
+
+This server runs over **stdio**, which is the format Cursor expects for MCP servers.
+
+- **Command**: run the server via `python run_mcp_server.py` (or `uv run python run_mcp_server.py` if you prefer uv)
+- **Environment**: set your `.env` (Cursor will inherit env vars from your shell if you launch Cursor from the terminal; otherwise configure env vars in the MCP server config)
+
+### Multi-workspace support
+
+All Databricks tools now accept an optional `workspace` parameter. If omitted, the server uses:
+- `DEFAULT_WORKSPACE` when using multi-workspace JSON config
+- `default` when using legacy single-workspace env vars
+
+#### Configure multiple workspaces
+
+Set `DATABRICKS_WORKSPACES_JSON` to a JSON array:
+
+```bash
+DATABRICKS_WORKSPACES_JSON='[
+  {"name":"prod","host":"your-prod.cloud.databricks.com","token":"dapi...","http_path":"/sql/1.0/warehouses/abc"},
+  {"name":"dev","host":"your-dev.cloud.databricks.com","token":"dapi...","http_path":"/sql/1.0/warehouses/def"}
+]'
+DEFAULT_WORKSPACE=dev
+```
+
+Then call tools like:
+- `execute_sql_query(sql="SELECT 1", workspace="prod")`
+- `list_jobs(limit=10, workspace="dev")`
 
 ## Configuration
 
