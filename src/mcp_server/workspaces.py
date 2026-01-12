@@ -82,7 +82,9 @@ def _load_multi_workspace_configs() -> Optional[Dict[str, WorkspaceConfig]]:
             )
 
         if name in configs:
-            raise ValueError(f"Duplicate workspace name in DATABRICKS_WORKSPACES_JSON: {name}")
+            raise ValueError(
+                f"Duplicate workspace name in DATABRICKS_WORKSPACES_JSON: {name}"
+            )
 
         configs[name] = WorkspaceConfig(
             name=name,
@@ -124,7 +126,9 @@ def _load_yaml_configs() -> Optional[Dict[str, WorkspaceConfig]]:
         http_path = str(item.get("http_path") or "").strip()
 
         if not all([name, host, token, http_path]):
-            raise ValueError(f"{path}: workspaces[{i}] must include name, host, token, http_path")
+            raise ValueError(
+                f"{path}: workspaces[{i}] must include name, host, token, http_path"
+            )
 
         if name in configs:
             raise ValueError(f"{path}: duplicate workspace name: {name}")
@@ -148,6 +152,11 @@ def _load_legacy_default() -> Optional[WorkspaceConfig]:
         return None
     if not all([host, token, http_path]):
         raise ValueError("Missing required Databricks credentials in environment")
+
+    # At this point all values are guaranteed non-None by the check above
+    assert host is not None
+    assert token is not None
+    assert http_path is not None
 
     return WorkspaceConfig(
         name="default",
@@ -184,7 +193,9 @@ def get_default_workspace_name() -> str:
         requested = str((data or {}).get("default_workspace") or "").strip()
         if requested:
             if requested not in yaml_cfg:
-                raise ValueError(f"{path}: default_workspace '{requested}' is not in workspaces")
+                raise ValueError(
+                    f"{path}: default_workspace '{requested}' is not in workspaces"
+                )
             return requested
         return next(iter(yaml_cfg.keys()))
 
@@ -195,7 +206,9 @@ def get_default_workspace_name() -> str:
     requested = (os.getenv("DEFAULT_WORKSPACE") or "").strip()
     if requested:
         if requested not in multi:
-            raise ValueError(f"DEFAULT_WORKSPACE={requested} is not in DATABRICKS_WORKSPACES_JSON")
+            raise ValueError(
+                f"DEFAULT_WORKSPACE={requested} is not in DATABRICKS_WORKSPACES_JSON"
+            )
         return requested
 
     # Fall back to first configured workspace
@@ -210,7 +223,9 @@ def resolve_workspace_name(workspace: Optional[str]) -> str:
     name = str(workspace).strip()
     workspaces = get_workspaces()
     if name not in workspaces:
-        raise ValueError(f"Unknown workspace '{name}'. Configured: {', '.join(sorted(workspaces.keys()))}")
+        raise ValueError(
+            f"Unknown workspace '{name}'. Configured: {', '.join(sorted(workspaces.keys()))}"
+        )
     return name
 
 
@@ -218,4 +233,3 @@ def get_workspace_config(workspace: Optional[str]) -> WorkspaceConfig:
     """Get the resolved workspace config (accepts None => default)."""
     name = resolve_workspace_name(workspace)
     return get_workspaces()[name]
-
