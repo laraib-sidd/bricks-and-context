@@ -166,27 +166,43 @@ def _load_legacy_default() -> Optional[WorkspaceConfig]:
     )
 
 
+_workspaces_cache: Optional[Dict[str, WorkspaceConfig]] = None
+
+
 def get_workspaces() -> Dict[str, WorkspaceConfig]:
-    """Return all configured workspaces."""
+    """Return all configured workspaces (cached after first load)."""
+    global _workspaces_cache
+    if _workspaces_cache is not None:
+        return _workspaces_cache
+
     yaml_cfg = _load_yaml_configs()
     if yaml_cfg is not None:
-        return yaml_cfg
+        _workspaces_cache = yaml_cfg
+        return _workspaces_cache
 
     multi = _load_multi_workspace_configs()
     if multi is not None:
-        return multi
+        _workspaces_cache = multi
+        return _workspaces_cache
 
     legacy = _load_legacy_default()
     if legacy is None:
         raise ValueError("No Databricks workspace configuration found in environment")
-    return {"default": legacy}
+    _workspaces_cache = {"default": legacy}
+    return _workspaces_cache
+
+
+_default_workspace_cache: Optional[str] = None
 
 
 def get_default_workspace_name() -> str:
-    """Return the default workspace name to use when tools omit workspace."""
+    """Return the default workspace name to use when tools omit workspace (cached)."""
+    global _default_workspace_cache
+    if _default_workspace_cache is not None:
+        return _default_workspace_cache
+
     yaml_cfg = _load_yaml_configs()
     if yaml_cfg is not None:
-        # Prefer YAML's default_workspace if present
         path = _auth_path()
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
@@ -196,12 +212,15 @@ def get_default_workspace_name() -> str:
                 raise ValueError(
                     f"{path}: default_workspace '{requested}' is not in workspaces"
                 )
-            return requested
-        return next(iter(yaml_cfg.keys()))
+            _default_workspace_cache = requested
+            return _default_workspace_cache
+        _default_workspace_cache = next(iter(yaml_cfg.keys()))
+        return _default_workspace_cache
 
     multi = _load_multi_workspace_configs()
     if multi is None:
-        return "default"
+        _default_workspace_cache = "default"
+        return _default_workspace_cache
 
     requested = (os.getenv("DEFAULT_WORKSPACE") or "").strip()
     if requested:
@@ -209,10 +228,11 @@ def get_default_workspace_name() -> str:
             raise ValueError(
                 f"DEFAULT_WORKSPACE={requested} is not in DATABRICKS_WORKSPACES_JSON"
             )
-        return requested
+        _default_workspace_cache = requested
+        return _default_workspace_cache
 
-    # Fall back to first configured workspace
-    return next(iter(multi.keys()))
+    _default_workspace_cache = next(iter(multi.keys()))
+    return _default_workspace_cache
 
 
 def resolve_workspace_name(workspace: Optional[str]) -> str:
