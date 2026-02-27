@@ -28,6 +28,41 @@ from .workspaces import get_workspace_config, resolve_workspace_name
 load_dotenv()
 
 
+def _humanize_connection_error(exc: Exception, workspace: str) -> Exception:
+    """Re-wrap a raw connector exception with an actionable message."""
+    msg = str(exc).lower()
+    if (
+        "unauthorized" in msg
+        or "403" in msg
+        or "401" in msg
+        or "invalid access token" in msg
+    ):
+        return ConnectionError(
+            f"[{workspace}] Authentication failed — your Databricks token may be "
+            f"expired or revoked. Regenerate it in Databricks > User Settings > "
+            f"Access Tokens and update auth.yaml.\n\nOriginal error: {exc}"
+        )
+    if "endpoint not found" in msg or "warehouse" in msg and "not found" in msg:
+        return ConnectionError(
+            f"[{workspace}] SQL Warehouse not found or has been deleted. "
+            f"Check http_path in auth.yaml.\n\nOriginal error: {exc}"
+        )
+    if (
+        "connection" in msg
+        or "timeout" in msg
+        or "unreachable" in msg
+        or "eof" in msg
+        or "refused" in msg
+        or "reset" in msg
+    ):
+        return ConnectionError(
+            f"[{workspace}] Cannot reach Databricks — the SQL Warehouse may be "
+            f"STOPPED or the network is unreachable. Use `list_warehouses` to check "
+            f"warehouse state.\n\nOriginal error: {exc}"
+        )
+    return exc
+
+
 class ConnectionPool:
     """
     Thread-safe connection pool for Databricks SQL connections with enhanced features.
@@ -109,7 +144,7 @@ class ConnectionPool:
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             record_operation("create_connection", duration_ms, False, str(e))
-            raise
+            raise _humanize_connection_error(e, self.workspace_name)
 
     def _validate_connection(self, connection: Connection) -> bool:
         """
@@ -225,6 +260,10 @@ class ConnectionPool:
                     return new_conn
                 except Exception as e:
                     self._created_connections -= 1
+                    # If we can't create a connection the warehouse is likely
+                    # down — flush all pooled connections so next attempt starts
+                    # fresh instead of handing out stale ones.
+                    self.flush_stale()
                     raise
 
         # Pool is full, wait for a connection to be returned
@@ -309,6 +348,37 @@ class ConnectionPool:
             self._conn_bad.pop(conn_id, None)
             duration_ms = (time.time() - start_time) * 1000
             record_operation("return_connection", duration_ms, False, str(e))
+
+    def flush_stale(self) -> int:
+        """Discard all pooled connections (e.g. after a warehouse restart).
+
+        Active connections that are currently checked out are not affected;
+        they will be discarded when returned because _validate_connection
+        will fail.
+        """
+        flushed = 0
+        while not self._pool.empty():
+            try:
+                conn = self._pool.get(block=False)
+                conn_id = id(conn)
+                self._conn_validated_at.pop(conn_id, None)
+                self._conn_bad.pop(conn_id, None)
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                flushed += 1
+            except Empty:
+                break
+        with self._lock:
+            self._created_connections = max(0, self._created_connections - flushed)
+        if flushed:
+            log_databricks_event(
+                "CONNECTION_POOL",
+                "FLUSH",
+                f"Flushed {flushed} stale connections",
+            )
+        return flushed
 
     def get_pool_stats(self) -> Dict[str, Any]:
         """Get detailed pool statistics."""

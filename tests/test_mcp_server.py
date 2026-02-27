@@ -64,8 +64,7 @@ class TestMCPServerTools:
             # Execute test
             result = mcp_server._execute_sql_query("SELECT * FROM invalid_table")
 
-        # Verify error handling
-        assert "Error executing query: Connection failed" in result
+        assert "Connection failed" in result
         assert "SELECT * FROM invalid_table" in result
 
     @patch("src.mcp_server.mcp_server.get_pool")

@@ -19,6 +19,12 @@ from .logger import log_mcp_event
 from .performance_monitor import get_performance_stats
 from .workspaces import get_workspaces, resolve_workspace_name
 
+from .catalog_manager import register_catalog_tools
+from .cluster_manager import register_cluster_tools
+from .workspace_manager import register_workspace_tools
+from .pipeline_manager import register_pipeline_tools
+from .query_history_manager import register_query_history_tools
+
 
 # Create FastMCP server instance optimized for AI solutions
 mcp: FastMCP = FastMCP("bricks-and-context")
@@ -46,6 +52,30 @@ def _escape_markdown_cell(value: str) -> str:
     """Escape characters that break markdown tables."""
     # Pipes break columns; newlines break rows; carriage returns can be messy.
     return value.replace("|", "\\|").replace("\r", " ").replace("\n", "\\n")
+
+
+def _format_sql_error(exc: Exception, sql: str, workspace: str) -> str:
+    """Turn a raw exception into an actionable error message for the AI."""
+    msg = str(exc).lower()
+    hint = ""
+    if "connectionerror" in type(exc).__name__.lower() or "connection" in msg:
+        hint = (
+            "\n\nThe SQL Warehouse may be stopped or unreachable. "
+            "Use `list_warehouses` to check its state."
+        )
+    elif "unauthorized" in msg or "401" in msg or "token" in msg:
+        hint = (
+            "\n\nAuthentication failed — the Databricks token for workspace "
+            f"'{workspace}' may be expired. Regenerate it and update auth.yaml."
+        )
+    elif "timeout" in msg:
+        hint = (
+            "\n\nThe query timed out. Try adding a LIMIT clause or "
+            "simplifying the query."
+        )
+    return (
+        f"Error executing query on workspace '{workspace}': {exc}{hint}\n\nQuery: {sql}"
+    )
 
 
 def _execute_sql_query(sql: str, workspace: Optional[str] = None) -> str:
@@ -117,7 +147,7 @@ def _execute_sql_query(sql: str, workspace: Optional[str] = None) -> str:
 
         return result
     except Exception as e:
-        return f"Error executing query: {str(e)}\n\nQuery: {sql}"
+        return _format_sql_error(e, sql, workspace_name)
 
 
 def _execute_sql_query_once(
@@ -1309,6 +1339,16 @@ def performance_stats(
         Detailed performance metrics including operation times, error rates, and system health
     """
     return _performance_stats(workspace)
+
+
+# ------------------------------------------------------------------
+# Register all new Databricks operations tools
+# ------------------------------------------------------------------
+register_catalog_tools(mcp)
+register_cluster_tools(mcp)
+register_workspace_tools(mcp)
+register_pipeline_tools(mcp)
+register_query_history_tools(mcp)
 
 
 def run_server() -> None:

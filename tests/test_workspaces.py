@@ -1,11 +1,22 @@
 import pytest
 import os
 
+import src.mcp_server.workspaces as ws_mod
 from src.mcp_server.workspaces import (
     get_workspace_config,
     get_workspaces,
     resolve_workspace_name,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_workspace_caches():
+    """Reset module-level caches so each test gets a clean slate."""
+    ws_mod._workspaces_cache = None
+    ws_mod._default_workspace_cache = None
+    yield
+    ws_mod._workspaces_cache = None
+    ws_mod._default_workspace_cache = None
 
 
 def test_legacy_single_workspace_env(monkeypatch, tmp_path):
