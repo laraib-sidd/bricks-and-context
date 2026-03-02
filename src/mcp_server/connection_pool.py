@@ -129,6 +129,7 @@ class ConnectionPool:
                 server_hostname=self.host,
                 http_path=self.http_path,
                 access_token=self.token,
+                _socket_timeout=300,
             )
 
             duration_ms = (time.time() - start_time) * 1000

@@ -1353,7 +1353,7 @@ register_query_history_tools(mcp)
 
 def run_server() -> None:
     """
-    Run the MCP server with stdio transport (recommended for AI integrations)
+    Run the MCP server with stdio transport (recommended for AI integrations).
     """
     mcp.run(transport="stdio")
 
