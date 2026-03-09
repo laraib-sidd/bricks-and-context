@@ -337,7 +337,7 @@ class TestMCPJobTools:
 
         result = _list_jobs(limit=10, name_filter="test")
 
-        assert "Databricks Jobs (1 found)" in result
+        assert "Databricks Jobs (1 shown, 1 fetched)" in result
         assert "123" in result
         assert "Test Job" in result
         assert "NOTEBOOK" in result

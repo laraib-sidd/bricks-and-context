@@ -41,7 +41,7 @@ class TestCatalogTools:
         mock_get_client.return_value = mock_client
 
         result = _list_catalogs("dev")
-        assert "Unity Catalogs (2 found)" in result
+        assert "Unity Catalogs (2 shown, 2 total)" in result
         assert "main" in result
         assert "system" in result
 
@@ -183,7 +183,7 @@ class TestClusterTools:
         mock_get_client.return_value = mock_client
 
         result = _list_clusters("dev")
-        assert "Clusters (1 found)" in result
+        assert "Clusters (1 shown, 1 total)" in result
         assert "test-cluster" in result
         assert "RUNNING" in result
 
@@ -225,7 +225,7 @@ class TestWarehouseTools:
         mock_get_client.return_value = mock_client
 
         result = _list_warehouses("dev")
-        assert "SQL Warehouses (1 found)" in result
+        assert "SQL Warehouses (1 shown, 1 total)" in result
         assert "Main Warehouse" in result
         assert "RUNNING" in result
 
@@ -296,7 +296,7 @@ class TestPipelineTools:
         mock_get_client.return_value = mock_client
 
         result = _list_pipelines(10, "dev")
-        assert "DLT Pipelines (1 found)" in result
+        assert "DLT Pipelines (1 shown, 1 total)" in result
         assert "ETL Pipeline" in result
 
     @patch("src.mcp_server.pipeline_manager.get_api_client")
