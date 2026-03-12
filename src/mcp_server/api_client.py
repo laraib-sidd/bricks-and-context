@@ -90,10 +90,12 @@ class DatabricksAPIClient:
         return result
 
     def get(self, path: str, **kwargs: Any) -> Dict[str, Any]:
-        return self.request("GET", path, **kwargs)
+        result: Dict[str, Any] = self.request("GET", path, **kwargs)
+        return result
 
     def post(self, path: str, **kwargs: Any) -> Dict[str, Any]:
-        return self.request("POST", path, **kwargs)
+        result: Dict[str, Any] = self.request("POST", path, **kwargs)
+        return result
 
 
 # ------------------------------------------------------------------

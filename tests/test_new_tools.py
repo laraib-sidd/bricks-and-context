@@ -17,8 +17,11 @@ import pytest
 
 
 class TestCatalogTools:
+    @patch("src.mcp_server.catalog_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.catalog_manager.get_api_client")
-    def test_list_catalogs_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_catalogs_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.catalog_manager import _list_catalogs
 
         mock_client = MagicMock()
@@ -45,8 +48,11 @@ class TestCatalogTools:
         assert "main" in result
         assert "system" in result
 
+    @patch("src.mcp_server.catalog_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.catalog_manager.get_api_client")
-    def test_list_catalogs_empty(self, mock_get_client: MagicMock) -> None:
+    def test_list_catalogs_empty(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.catalog_manager import _list_catalogs
 
         mock_client = MagicMock()
@@ -56,8 +62,11 @@ class TestCatalogTools:
         result = _list_catalogs("dev")
         assert "No catalogs found" in result
 
+    @patch("src.mcp_server.catalog_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.catalog_manager.get_api_client")
-    def test_list_uc_schemas_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_uc_schemas_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.catalog_manager import _list_uc_schemas
 
         mock_client = MagicMock()
@@ -72,8 +81,11 @@ class TestCatalogTools:
         assert "Schemas in catalog 'main'" in result
         assert "public" in result
 
+    @patch("src.mcp_server.catalog_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.catalog_manager.get_api_client")
-    def test_list_uc_tables_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_uc_tables_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.catalog_manager import _list_uc_tables
 
         mock_client = MagicMock()
@@ -94,8 +106,11 @@ class TestCatalogTools:
         assert "users" in result
         assert "DELTA" in result
 
+    @patch("src.mcp_server.catalog_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.catalog_manager.get_api_client")
-    def test_get_uc_table_info_success(self, mock_get_client: MagicMock) -> None:
+    def test_get_uc_table_info_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.catalog_manager import _get_uc_table_info
 
         mock_client = MagicMock()
@@ -134,8 +149,11 @@ class TestCatalogTools:
         with pytest.raises(ValueError):
             _validate_identifier("schema; DROP TABLE users", "schema_name")
 
+    @patch("src.mcp_server.catalog_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.catalog_manager.get_api_client")
-    def test_list_volumes_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_volumes_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.catalog_manager import _list_volumes
 
         mock_client = MagicMock()
@@ -162,8 +180,11 @@ class TestCatalogTools:
 
 
 class TestClusterTools:
+    @patch("src.mcp_server.cluster_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.cluster_manager.get_api_client")
-    def test_list_clusters_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_clusters_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.cluster_manager import _list_clusters
 
         mock_client = MagicMock()
@@ -187,8 +208,11 @@ class TestClusterTools:
         assert "test-cluster" in result
         assert "RUNNING" in result
 
+    @patch("src.mcp_server.cluster_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.cluster_manager.get_api_client")
-    def test_list_clusters_empty(self, mock_get_client: MagicMock) -> None:
+    def test_list_clusters_empty(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.cluster_manager import _list_clusters
 
         mock_client = MagicMock()
@@ -205,8 +229,11 @@ class TestClusterTools:
 
 
 class TestWarehouseTools:
+    @patch("src.mcp_server.cluster_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.cluster_manager.get_api_client")
-    def test_list_warehouses_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_warehouses_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.cluster_manager import _list_warehouses
 
         mock_client = MagicMock()
@@ -236,15 +263,24 @@ class TestWarehouseTools:
 
 
 class TestWorkspaceTools:
+    @patch(
+        "src.mcp_server.workspace_manager.resolve_workspace_name", return_value="dev"
+    )
     @patch("src.mcp_server.workspace_manager.get_api_client")
-    def test_list_workspace_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_workspace_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.workspace_manager import _list_workspace
 
         mock_client = MagicMock()
         mock_client.get.return_value = {
             "objects": [
                 {"path": "/Users", "object_type": "DIRECTORY"},
-                {"path": "/notebook1", "object_type": "NOTEBOOK", "language": "PYTHON"},
+                {
+                    "path": "/notebook1",
+                    "object_type": "NOTEBOOK",
+                    "language": "PYTHON",
+                },
             ]
         }
         mock_get_client.return_value = mock_client
@@ -254,8 +290,13 @@ class TestWorkspaceTools:
         assert "/Users" in result
         assert "NOTEBOOK" in result
 
+    @patch(
+        "src.mcp_server.workspace_manager.resolve_workspace_name", return_value="dev"
+    )
     @patch("src.mcp_server.workspace_manager.get_api_client")
-    def test_read_notebook_success(self, mock_get_client: MagicMock) -> None:
+    def test_read_notebook_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         import base64
 
         from src.mcp_server.workspace_manager import _read_notebook
@@ -278,8 +319,11 @@ class TestWorkspaceTools:
 
 
 class TestPipelineTools:
+    @patch("src.mcp_server.pipeline_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.pipeline_manager.get_api_client")
-    def test_list_pipelines_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_pipelines_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.pipeline_manager import _list_pipelines
 
         mock_client = MagicMock()
@@ -295,12 +339,15 @@ class TestPipelineTools:
         }
         mock_get_client.return_value = mock_client
 
-        result = _list_pipelines(10, "dev")
+        result = _list_pipelines(workspace="dev")
         assert "DLT Pipelines (1 shown, 1 total)" in result
         assert "ETL Pipeline" in result
 
+    @patch("src.mcp_server.pipeline_manager.resolve_workspace_name", return_value="dev")
     @patch("src.mcp_server.pipeline_manager.get_api_client")
-    def test_start_pipeline(self, mock_get_client: MagicMock) -> None:
+    def test_start_pipeline(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.pipeline_manager import _start_pipeline
 
         mock_client = MagicMock()
@@ -318,8 +365,14 @@ class TestPipelineTools:
 
 
 class TestQueryHistoryTools:
+    @patch(
+        "src.mcp_server.query_history_manager.resolve_workspace_name",
+        return_value="dev",
+    )
     @patch("src.mcp_server.query_history_manager.get_api_client")
-    def test_list_query_history_success(self, mock_get_client: MagicMock) -> None:
+    def test_list_query_history_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.query_history_manager import _list_query_history
 
         mock_client = MagicMock()
@@ -343,8 +396,14 @@ class TestQueryHistoryTools:
         assert "FINISHED" in result
         assert "SELECT * FROM users" in result
 
+    @patch(
+        "src.mcp_server.query_history_manager.resolve_workspace_name",
+        return_value="dev",
+    )
     @patch("src.mcp_server.query_history_manager.get_api_client")
-    def test_get_object_permissions_success(self, mock_get_client: MagicMock) -> None:
+    def test_get_object_permissions_success(
+        self, mock_get_client: MagicMock, mock_ws: MagicMock
+    ) -> None:
         from src.mcp_server.query_history_manager import _get_object_permissions
 
         mock_client = MagicMock()
