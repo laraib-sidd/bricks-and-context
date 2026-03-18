@@ -6,11 +6,19 @@ Provides AI solutions with tools to interact with Databricks via MCP protocol
 import hashlib
 import json
 import os
+import re
 from typing import Optional
 
 from fastmcp import FastMCP
 
 from .config import get_setting_bool, get_setting_int
+from .constants import (
+    DEFAULT_PAGE_LIMIT,
+    READ_ONLY_ANNOTATIONS,
+    clamp_pagination,
+    enforce_character_limit,
+    pagination_footer,
+)
 from .cache_manager import get_cached_query_result, cache_query_result, get_cache_stats
 from .connection_pool import PooledConnection, get_pool
 from .error_handler import with_databricks_retry, get_error_handler
@@ -26,8 +34,16 @@ from .pipeline_manager import register_pipeline_tools
 from .query_history_manager import register_query_history_tools
 
 
-# Create FastMCP server instance optimized for AI solutions
-mcp: FastMCP = FastMCP("bricks-and-context")
+# Create FastMCP server instance
+mcp: FastMCP = FastMCP("databricks_mcp")
+
+_SAFE_IDENTIFIER = re.compile(r"^[\w.\-]+$")
+
+
+def _validate_identifier(name: str, label: str = "identifier") -> None:
+    """Reject identifiers that could break SQL interpolation."""
+    if not name or not _SAFE_IDENTIFIER.match(name):
+        raise ValueError(f"Invalid {label}: {name!r}")
 
 
 # Core functions (testable without MCP decorators)
@@ -239,23 +255,40 @@ def _execute_sql_query_once(
                 pass
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_execute_sql_query",
+    annotations={
+        "title": "Execute SQL Query",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
 def execute_sql_query(sql: str, workspace: Optional[str] = None) -> str:
     """
-    Execute a SQL query against Databricks and return results in markdown table format.
+    Execute a SQL query against Databricks and return results as a markdown table.
 
-    Perfect for AI analysis - returns structured data that AI can easily parse and reason about.
+    Use when: running ad-hoc SQL analysis, exploring data, or answering questions
+    that require querying tables.
+    Do NOT use when: you need Unity Catalog metadata — use
+    databricks_get_uc_table_info instead.
 
     Args:
         sql: The SQL query to execute (SELECT statements recommended)
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
-        Formatted markdown table with query results, or error message if query fails
+        Formatted markdown table with query results, or error message
+
+    Error conditions:
+        - Write queries are blocked unless ALLOW_WRITE_QUERIES=true.
+        - Results are truncated when they exceed MAX_RESULT_ROWS or MAX_RESULT_BYTES.
 
     Example:
         execute_sql_query("SELECT * FROM sales_data LIMIT 10")
 
-    Security: Only SELECT queries are recommended for AI safety
+    Security: Only read-only queries are recommended for AI safety.
     """
     return _execute_sql_query(sql, workspace)
 
@@ -300,12 +333,21 @@ def _discover_schemas(workspace: Optional[str] = None) -> str:
         return f"Error discovering schemas: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_discover_schemas",
+    annotations={"title": "Discover Schemas", **READ_ONLY_ANNOTATIONS},
+)
 def discover_schemas(workspace: Optional[str] = None) -> str:
     """
-    Discover all available schemas (databases) in the Databricks workspace.
+    Discover all available schemas (databases) via the SQL warehouse.
 
-    Essential for AI to understand the data landscape before querying.
+    Use when: exploring the data landscape before querying, when you want
+    the schemas visible to the current SQL warehouse.
+    Do NOT use when: you need Unity Catalog schemas across catalogs — use
+    databricks_list_uc_schemas instead.
+
+    Args:
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
         Markdown table listing all schemas with descriptions
@@ -318,6 +360,7 @@ def _discover_tables(
 ) -> str:
     """Core table discovery logic"""
     try:
+        _validate_identifier(schema_name, "schema_name")
         sql = f"SHOW TABLES IN {schema_name}"
         workspace_name = resolve_workspace_name(workspace)
         pool = get_pool(workspace_name)
@@ -351,20 +394,29 @@ def _discover_tables(
         return f"Error discovering tables in schema '{schema_name}': {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_discover_tables",
+    annotations={"title": "Discover Tables", **READ_ONLY_ANNOTATIONS},
+)
 def discover_tables(
     schema_name: str = "default", workspace: Optional[str] = None
 ) -> str:
     """
-    Discover all tables in a specific schema with metadata.
+    Discover all tables in a specific schema via SHOW TABLES.
 
-    Helps AI understand available data sources for analysis and querying.
+    Use when: listing tables before writing queries against a schema.
+    Do NOT use when: you need detailed column info — use
+    databricks_describe_table or databricks_get_uc_table_info.
 
     Args:
         schema_name: Name of the schema to explore (default: "default")
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
         Markdown table listing all tables with metadata
+
+    Error conditions:
+        Returns error if schema_name contains invalid characters.
     """
     return _discover_tables(schema_name, workspace)
 
@@ -374,7 +426,8 @@ def _describe_table(
 ) -> str:
     """Core table description logic"""
     try:
-        # Use DESCRIBE EXTENDED for comprehensive information
+        _validate_identifier(schema_name, "schema_name")
+        _validate_identifier(table_name, "table_name")
         sql = f"DESCRIBE EXTENDED {schema_name}.{table_name}"
         workspace_name = resolve_workspace_name(workspace)
         pool = get_pool(workspace_name)
@@ -425,21 +478,30 @@ def _describe_table(
         return f"Error describing table '{schema_name}.{table_name}': {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_describe_table",
+    annotations={"title": "Describe Table", **READ_ONLY_ANNOTATIONS},
+)
 def describe_table(
     table_name: str, schema_name: str = "default", workspace: Optional[str] = None
 ) -> str:
     """
-    Get detailed schema information for a specific table.
+    Get detailed schema information for a specific table via DESCRIBE EXTENDED.
 
-    Critical for AI to understand data types, constraints, and structure before querying.
+    Use when: you need column names, types, and nullability before writing queries.
+    Do NOT use when: you need Unity Catalog metadata (owner, storage location) —
+    use databricks_get_uc_table_info.
 
     Args:
         table_name: Name of the table to describe
         schema_name: Schema containing the table (default: "default")
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
         Markdown table with column details (name, type, nullable, etc.)
+
+    Error conditions:
+        Returns error if table_name or schema_name contain invalid characters.
     """
     return _describe_table(table_name, schema_name, workspace)
 
@@ -452,7 +514,8 @@ def _get_table_sample(
 ) -> str:
     """Core table sampling logic"""
     try:
-        # Limit for performance and AI context efficiency
+        _validate_identifier(schema_name, "schema_name")
+        _validate_identifier(table_name, "table_name")
         safe_limit = min(max(1, limit), 20)
         sql = f"SELECT * FROM {schema_name}.{table_name} LIMIT {safe_limit}"
 
@@ -472,7 +535,10 @@ def _get_table_sample(
         return f"Error sampling table '{schema_name}.{table_name}': {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_get_table_sample",
+    annotations={"title": "Get Table Sample", **READ_ONLY_ANNOTATIONS},
+)
 def get_table_sample(
     table_name: str,
     schema_name: str = "default",
@@ -480,17 +546,24 @@ def get_table_sample(
     workspace: Optional[str] = None,
 ) -> str:
     """
-    Get a small sample of data from a table for AI analysis.
+    Get a small sample of rows from a table.
 
-    Perfect for AI to understand data patterns, formats, and content before complex analysis.
+    Use when: you need to understand data patterns, formats, and content
+    before writing complex queries.
+    Do NOT use when: you need the full result set — use
+    databricks_execute_sql_query with your own SELECT instead.
 
     Args:
         table_name: Name of the table to sample
         schema_name: Schema containing the table (default: "default")
-        limit: Number of rows to return (default: 5, max: 20 for performance)
+        limit: Number of rows to return (default: 5, max: 20)
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
         Markdown table with sample data
+
+    Error conditions:
+        Returns error if table_name or schema_name contain invalid characters.
     """
     return _get_table_sample(table_name, schema_name, limit, workspace)
 
@@ -515,12 +588,21 @@ def _connection_health(workspace: Optional[str] = None) -> str:
         return f"❌ Connection Health: ERROR\n\nFailed to check connection: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_connection_health",
+    annotations={"title": "Check Connection Health", **READ_ONLY_ANNOTATIONS},
+)
 def connection_health(workspace: Optional[str] = None) -> str:
     """
     Check the health of the Databricks connection pool.
 
-    Useful for AI to understand system status and troubleshoot connectivity issues.
+    Use when: troubleshooting connectivity issues or verifying the server
+    can reach the SQL warehouse.
+    Do NOT use when: you need warehouse-level details — use
+    databricks_get_warehouse_status.
+
+    Args:
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
         Status information about connection pool and Databricks connectivity
@@ -532,47 +614,53 @@ def connection_health(workspace: Optional[str] = None) -> str:
 
 
 def _list_jobs(
-    limit: int = 25, name_filter: Optional[str] = None, workspace: Optional[str] = None
+    limit: int = DEFAULT_PAGE_LIMIT,
+    offset: int = 0,
+    name_filter: Optional[str] = None,
+    workspace: Optional[str] = None,
 ) -> str:
-    """Core job listing logic"""
+    """Core job listing logic with pagination."""
     try:
+        limit, offset = clamp_pagination(limit, offset)
         log_mcp_event(
             "list_jobs",
             "START",
-            f"Listing jobs (limit: {limit}, filter: {name_filter})",
+            f"Listing jobs (limit: {limit}, offset: {offset}, filter: {name_filter})",
         )
 
         workspace_name = resolve_workspace_name(workspace)
         job_manager = get_job_manager(workspace_name)
-        jobs = job_manager.list_jobs(limit=limit, name_filter=name_filter)
+        fetch_limit = min(offset + limit, 100)
+        all_jobs = job_manager.list_jobs(limit=fetch_limit, name_filter=name_filter)
 
-        if not jobs:
+        if not all_jobs:
             return "No jobs found in the Databricks workspace."
 
-        # Format as markdown table for AI consumption
+        total = len(all_jobs)
+        jobs = all_jobs[offset : offset + limit]
+        if not jobs:
+            return f"No jobs at offset {offset} (total: {total})."
+
         header = "| Job ID | Job Name | Type | Creator | Status | Last Run |"
         separator = "| --- | --- | --- | --- | --- | --- |"
 
         table_rows = []
         for job in jobs:
             last_run = job.last_run_state if job.last_run_state else "None"
-            created_time = (
-                job_manager._format_timestamp(job.created_time)
-                if hasattr(job_manager, "_format_timestamp")
-                else "Unknown"
-            )
-
             table_rows.append(
                 f"| {job.job_id} | {job.name} | {job.job_type} | {job.creator_email} | {job.status} | {last_run} |"
             )
 
         result = (
-            f"Databricks Jobs ({len(jobs)} found):\n\n{header}\n{separator}\n"
+            f"Databricks Jobs ({len(jobs)} shown, {total} fetched):\n\n{header}\n{separator}\n"
             + "\n".join(table_rows)
+            + pagination_footer(
+                count=len(jobs), offset=offset, limit=limit, total=total
+            )
         )
 
         log_mcp_event("list_jobs", "SUCCESS", f"Retrieved {len(jobs)} jobs")
-        return result
+        return enforce_character_limit(result, "Use offset and limit to paginate.")
 
     except Exception as e:
         error_msg = f"Error listing jobs: {str(e)}"
@@ -580,26 +668,37 @@ def _list_jobs(
         return error_msg
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_list_jobs",
+    annotations={"title": "List Jobs", **READ_ONLY_ANNOTATIONS},
+)
 def list_jobs(
-    limit: int = 25, name_filter: Optional[str] = None, workspace: Optional[str] = None
+    limit: int = DEFAULT_PAGE_LIMIT,
+    offset: int = 0,
+    name_filter: Optional[str] = None,
+    workspace: Optional[str] = None,
 ) -> str:
     """
-    List Databricks jobs with optional filtering.
+    List Databricks jobs with optional filtering and pagination.
 
-    Essential for AI to discover available jobs for monitoring and management.
+    Use when: discovering available jobs, monitoring job status, or searching
+    for specific jobs by name.
+    Do NOT use when: you need details for a specific job — use
+    databricks_get_job_details instead.
 
     Args:
-        limit: Maximum number of jobs to return (default: 25, max: 100)
-        name_filter: Optional filter for job names (case-insensitive partial match)
+        limit: Max jobs to return (default 25, max 100)
+        offset: Number of results to skip for pagination (default 0)
+        name_filter: Optional case-insensitive partial match on job name
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
-        Markdown table with job information (ID, name, type, creator, status, last run)
+        Markdown table with job ID, name, type, creator, status, and last run
 
     Example:
         list_jobs(limit=10, name_filter="data_pipeline")
     """
-    return _list_jobs(limit, name_filter, workspace)
+    return _list_jobs(limit, offset, name_filter, workspace)
 
 
 def _get_job_details(job_id: int, workspace: Optional[str] = None) -> str:
@@ -688,18 +787,24 @@ def _get_job_details(job_id: int, workspace: Optional[str] = None) -> str:
         return error_msg
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_get_job_details",
+    annotations={"title": "Get Job Details", **READ_ONLY_ANNOTATIONS},
+)
 def get_job_details(job_id: int, workspace: Optional[str] = None) -> str:
     """
     Get detailed information about a specific Databricks job.
 
-    Critical for AI to understand job configuration, schedule, and dependencies.
+    Use when: you need configuration, schedule, cluster, and task details for
+    a known job ID.
+    Do NOT use when: you're browsing jobs — use databricks_list_jobs first.
 
     Args:
         job_id: Databricks job ID
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
-        Detailed job information including schedule, cluster config, and task settings
+        Detailed job info including schedule, cluster config, and task settings
 
     Example:
         get_job_details(123)
@@ -764,7 +869,10 @@ def _get_job_runs(
         return error_msg
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_get_job_runs",
+    annotations={"title": "Get Job Runs", **READ_ONLY_ANNOTATIONS},
+)
 def get_job_runs(
     job_id: int,
     limit: int = 10,
@@ -774,15 +882,19 @@ def get_job_runs(
     """
     Get run history for a specific Databricks job.
 
-    Essential for AI to monitor job performance, track failures, and analyze execution patterns.
+    Use when: monitoring job performance, tracking failures, or reviewing
+    execution patterns.
+    Do NOT use when: you need the output/logs for a specific run — use
+    databricks_get_job_run_output.
 
     Args:
         job_id: Databricks job ID
-        limit: Maximum number of runs to return (default: 10, max: 100)
+        limit: Max runs to return (default 10, max 100)
         active_only: If True, only return currently running jobs
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
-        Markdown table with run information (ID, state, result, duration, trigger)
+        Markdown table with run ID, state, result, duration, and trigger
 
     Example:
         get_job_runs(123, limit=5, active_only=True)
@@ -861,7 +973,16 @@ def _trigger_job(
         return error_msg
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_trigger_job",
+    annotations={
+        "title": "Trigger Job Run",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
 def trigger_job(
     job_id: int,
     notebook_params: Optional[str] = None,
@@ -873,13 +994,17 @@ def trigger_job(
     """
     Trigger a Databricks job run with optional parameters.
 
-    Powerful automation capability for AI to start data processing workflows.
+    Use when: you need to start a specific job execution on demand.
+    Do NOT use when: you want to start a DLT pipeline — use
+    databricks_start_pipeline.
 
     Args:
         job_id: Databricks job ID to trigger
-        notebook_params: JSON string of parameters for notebook tasks (e.g., '{"param1": "value1"}')
-        jar_params: JSON array string of parameters for JAR tasks (e.g., '["arg1", "arg2"]')
-        python_params: JSON array string of parameters for Python tasks (e.g., '["arg1", "arg2"]')
+        notebook_params: JSON string of notebook params (e.g., '{"param1": "value1"}')
+        jar_params: JSON array string of JAR params (e.g., '["arg1", "arg2"]')
+        python_params: JSON array string of Python params (e.g., '["arg1"]')
+        job_parameters: JSON string of job-level params (e.g., '{"key": "value"}')
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
         Success message with run ID, or error details
@@ -887,7 +1012,7 @@ def trigger_job(
     Example:
         trigger_job(123, notebook_params='{"date": "2024-01-01", "env": "prod"}')
 
-    Security: Use with caution - this will start actual job execution
+    Security: This will start actual job execution — use with caution.
     """
     return _trigger_job(
         job_id, notebook_params, jar_params, python_params, job_parameters, workspace
@@ -921,15 +1046,27 @@ def _cancel_job_run(run_id: int, workspace: Optional[str] = None) -> str:
         return error_msg
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_cancel_job_run",
+    annotations={
+        "title": "Cancel Job Run",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
 def cancel_job_run(run_id: int, workspace: Optional[str] = None) -> str:
     """
     Cancel a running Databricks job.
 
-    Critical capability for AI to stop problematic or long-running jobs.
+    Use when: a job run is stuck, taking too long, or was started by mistake.
+    Do NOT use when: the run has already completed — check status first with
+    databricks_get_job_runs.
 
     Args:
         run_id: Job run ID to cancel
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
         Success message or error details
@@ -937,7 +1074,7 @@ def cancel_job_run(run_id: int, workspace: Optional[str] = None) -> str:
     Example:
         cancel_job_run(456789)
 
-    Security: Use carefully - this will stop actual job execution
+    Security: This will stop actual job execution — use with caution.
     """
     return _cancel_job_run(run_id, workspace)
 
@@ -994,15 +1131,21 @@ def _get_job_run_output(run_id: int, workspace: Optional[str] = None) -> str:
         return error_msg
 
 
-@mcp.tool()
+@mcp.tool(
+    name="databricks_get_job_run_output",
+    annotations={"title": "Get Job Run Output", **READ_ONLY_ANNOTATIONS},
+)
 def get_job_run_output(run_id: int, workspace: Optional[str] = None) -> str:
     """
     Get output, logs, and results from a job run.
 
-    Essential for AI to analyze job results, debug failures, and extract insights.
+    Use when: analysing job results, debugging failures, or extracting output
+    from a completed or failed run.
+    Do NOT use when: you need run status — use databricks_get_job_runs.
 
     Args:
         run_id: Job run ID to get output for
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
         Formatted output including logs, errors, notebook output, and metadata
@@ -1102,18 +1245,28 @@ def _cache_stats() -> str:
         return f"**Error**: {error_msg}"
 
 
-@mcp.tool()
-def cache_stats(random_string: str = "dummy") -> str:
+@mcp.tool(
+    name="databricks_cache_stats",
+    annotations={
+        "title": "Cache Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def cache_stats() -> str:
     """
     Get cache performance statistics and optimization insights.
 
-    Essential for monitoring cache hit rates and system efficiency.
-
-    Args:
-        random_string: Dummy parameter for no-parameter tools
+    Use when: monitoring cache hit rates, diagnosing slow queries, or checking
+    if the cache is working effectively.
+    Do NOT use when: you need overall system health — use
+    databricks_performance_stats.
 
     Returns:
-        Detailed cache statistics including hit rates, memory usage, and category breakdown
+        Detailed cache statistics including hit rates, memory usage, and
+        category breakdown
     """
     return _cache_stats()
 
@@ -1323,20 +1476,30 @@ def _performance_stats(workspace: Optional[str] = None) -> str:
         return f"**Error**: {error_msg}"
 
 
-@mcp.tool()
-def performance_stats(
-    random_string: str = "dummy", workspace: Optional[str] = None
-) -> str:
+@mcp.tool(
+    name="databricks_performance_stats",
+    annotations={
+        "title": "Performance Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def performance_stats(workspace: Optional[str] = None) -> str:
     """
     Get comprehensive system performance statistics and health metrics.
 
-    Critical for monitoring system performance, identifying bottlenecks, and optimization.
+    Use when: monitoring system performance, identifying bottlenecks, or
+    checking circuit breaker status.
+    Do NOT use when: you only need cache info — use databricks_cache_stats.
 
     Args:
-        random_string: Dummy parameter for no-parameter tools
+        workspace: Target workspace name (uses default if omitted)
 
     Returns:
-        Detailed performance metrics including operation times, error rates, and system health
+        Detailed performance metrics including operation times, error rates,
+        and system health
     """
     return _performance_stats(workspace)
 
@@ -1353,7 +1516,7 @@ register_query_history_tools(mcp)
 
 def run_server() -> None:
     """
-    Run the MCP server with stdio transport (recommended for AI integrations)
+    Run the MCP server with stdio transport (recommended for AI integrations).
     """
     mcp.run(transport="stdio")
 

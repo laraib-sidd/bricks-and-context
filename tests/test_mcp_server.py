@@ -344,7 +344,7 @@ class TestMCPServerIntegration:
         """Test that the FastMCP server is created correctly"""
         # Verify server instance exists and has expected properties
         assert mcp_server.mcp is not None
-        assert mcp_server.mcp.name == "bricks-and-context"
+        assert mcp_server.mcp.name == "databricks_mcp"
 
     def test_all_tools_registered(self):
         """Test that all expected MCP tools are registered"""
