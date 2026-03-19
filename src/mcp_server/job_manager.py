@@ -145,6 +145,12 @@ class DatabricksJobManager:
                     raise Exception(
                         f"rate limit: HTTP 429 from Databricks Jobs API: {body}"
                     )
+                # 4xx client errors (except 429 handled above) should not be
+                # retried — bad input won't succeed on retry.
+                if response.status_code < 500:
+                    raise ValueError(
+                        f"client error: HTTP {response.status_code} from Jobs API: {body}"
+                    )
                 raise Exception(
                     f"databricks api error: HTTP {response.status_code} from Jobs API: {body}"
                 )

@@ -174,31 +174,31 @@ class ErrorHandler:
         """Classify error for appropriate handling strategy."""
         error_str = str(error).lower()
 
-        if any(
-            keyword in error_str
-            for keyword in ["network", "connection", "timeout", "unreachable"]
-        ):
-            return ErrorType.NETWORK
-        elif any(
-            keyword in error_str
-            for keyword in ["authentication", "unauthorized", "forbidden", "token"]
-        ):
-            return ErrorType.AUTHENTICATION
-        elif any(
-            keyword in error_str
-            for keyword in ["rate limit", "too many requests", "429"]
-        ):
+        # Check rate limit FIRST — rate limit messages can contain "token" (e.g. "token bucket")
+        # which would false-match the auth check below if order were reversed.
+        if any(keyword in error_str for keyword in ["rate limit", "too many requests", "429", "throttl"]):
             return ErrorType.RATE_LIMIT
-        elif any(
-            keyword in error_str for keyword in ["databricks", "api error", "rest api"]
-        ):
-            return ErrorType.DATABRICKS_API
-        elif any(keyword in error_str for keyword in ["sql", "query", "syntax"]):
-            return ErrorType.SQL_ERROR
-        elif "timeout" in error_str:
+
+        if any(keyword in error_str for keyword in ["authentication", "unauthorized", "forbidden"]):
+            return ErrorType.AUTHENTICATION
+
+        # Narrow token match: only treat as auth when paired with a failure qualifier.
+        if "token" in error_str and any(keyword in error_str for keyword in ["expired", "invalid", "revoked"]):
+            return ErrorType.AUTHENTICATION
+
+        if "timeout" in error_str:
             return ErrorType.TIMEOUT
-        else:
-            return ErrorType.UNKNOWN
+
+        if any(keyword in error_str for keyword in ["network", "connection", "unreachable", "refused", "reset"]):
+            return ErrorType.NETWORK
+
+        if any(keyword in error_str for keyword in ["databricks", "api error", "rest api"]):
+            return ErrorType.DATABRICKS_API
+
+        if any(keyword in error_str for keyword in ["sql", "query", "syntax"]):
+            return ErrorType.SQL_ERROR
+
+        return ErrorType.UNKNOWN
 
     def is_retryable(self, error: Exception, retry_config: RetryConfig) -> bool:
         """Determine if an error is retryable based on classification."""
@@ -262,7 +262,10 @@ class ErrorHandler:
                 # Check circuit breaker
                 if circuit and not circuit.can_execute():
                     error_msg = (
-                        f"Circuit breaker {operation_name} is OPEN - blocking execution"
+                        f"Databricks is temporarily unavailable (circuit breaker '{operation_name}' is open). "
+                        f"The server detected repeated failures and is waiting before retrying. "
+                        f"This will automatically recover in up to {circuit.config.recovery_timeout_seconds:.0f} seconds. "
+                        f"If this persists, check warehouse status with `databricks_list_warehouses`."
                     )
                     log_databricks_event(
                         "ERROR_HANDLER", "BLOCKED", error_msg, "WARNING"
