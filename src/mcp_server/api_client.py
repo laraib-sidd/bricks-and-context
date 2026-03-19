@@ -75,6 +75,13 @@ class DatabricksAPIClient:
                 raise Exception(
                     f"authentication: HTTP 403 — insufficient permissions: {body}"
                 )
+            # 4xx client errors (except 429/401/403 handled above) are NOT
+            # retryable — bad input won't succeed on retry and should not
+            # trip the circuit breaker.
+            if response.status_code < 500:
+                raise ValueError(
+                    f"client error: HTTP {response.status_code}: {body}"
+                )
             raise Exception(
                 f"databricks api error: HTTP {response.status_code}: {body}"
             )

@@ -281,7 +281,13 @@ class ConnectionPool:
                 False,
                 "Timeout waiting for connection",
             )
-            raise TimeoutError(f"No connection available within {timeout} seconds")
+            raise TimeoutError(
+                f"All {self.max_connections} connections are in use and none became "
+                f"available within {timeout} seconds. This usually means the SQL "
+                f"Warehouse is under heavy load or queries are running slowly. "
+                f"Try: 1) Wait and retry, 2) Use `databricks_list_warehouses` to check state, "
+                f"3) Add LIMIT to your queries."
+            )
 
     def return_connection(self, connection: Connection) -> None:
         """
