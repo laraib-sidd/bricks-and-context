@@ -614,6 +614,10 @@ class DatabricksJobManager:
 
         return tasks, summary
 
+    def get_job_run_details(self, run_id: int) -> Dict[str, Any]:
+        """Get full run details (metadata + cluster info) for diagnostics."""
+        return self._make_request("GET", "/jobs/runs/get", params={"run_id": run_id})
+
     def _format_timestamp(self, timestamp_ms: int) -> str:
         """Format timestamp for human readability."""
         if timestamp_ms:

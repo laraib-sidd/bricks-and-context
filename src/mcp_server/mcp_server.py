@@ -27,8 +27,11 @@ from .logger import log_mcp_event
 from .performance_monitor import get_performance_stats
 from .workspaces import get_workspaces, resolve_workspace_name
 
+from .api_client import get_api_client
 from .catalog_manager import register_catalog_tools
 from .cluster_manager import register_cluster_tools
+from .dbfs_manager import register_dbfs_tools
+from .genie_manager import register_genie_tools
 from .workspace_manager import register_workspace_tools
 from .pipeline_manager import register_pipeline_tools
 from .query_history_manager import register_query_history_tools
@@ -1512,6 +1515,163 @@ register_cluster_tools(mcp)
 register_workspace_tools(mcp)
 register_pipeline_tools(mcp)
 register_query_history_tools(mcp)
+register_dbfs_tools(mcp)
+register_genie_tools(mcp)
+
+
+# ===== COMBINED JOB DIAGNOSTICS =====
+
+
+def _get_job_run_logs(
+    run_id: int,
+    include_cluster_events: bool = True,
+    workspace: Optional[str] = None,
+) -> str:
+    """All-in-one job run diagnostics combining output, events, and log hints."""
+    from datetime import datetime
+
+    def _ts(epoch_ms: int) -> str:
+        if not epoch_ms:
+            return "N/A"
+        return datetime.fromtimestamp(epoch_ms / 1000).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    try:
+        workspace_name = resolve_workspace_name(workspace)
+        jm = get_job_manager(workspace_name)
+
+        # 1. Get run details
+        run_resp = jm.get_job_run_details(run_id)
+
+        state = run_resp.get("state", {})
+        result_state = state.get("result_state", "N/A")
+        life_cycle_state = state.get("life_cycle_state", "N/A")
+        state_message = state.get("state_message", "")
+
+        run_name = run_resp.get("run_name", "N/A")
+        job_id = run_resp.get("job_id", "N/A")
+
+        cluster_instance = run_resp.get("cluster_instance", {})
+        cluster_id = cluster_instance.get("cluster_id", "")
+
+        cluster_spec = run_resp.get("cluster_spec", {})
+        new_cluster = cluster_spec.get("new_cluster", {})
+        log_conf = new_cluster.get("cluster_log_conf", {})
+        dbfs_dest = log_conf.get("dbfs", {}).get("destination", "")
+
+        result = f"## Job Run Diagnostics: Run {run_id}\n\n"
+        result += f"- **Run ID:** {run_id}\n"
+        result += f"- **Job ID:** {job_id}\n"
+        result += f"- **Run Name:** {run_name}\n"
+        result += f"- **Lifecycle State:** {life_cycle_state}\n"
+        result += f"- **Result State:** {result_state}\n"
+        result += f"- **Start Time:** {_ts(run_resp.get('start_time', 0))}\n"
+        result += f"- **End Time:** {_ts(run_resp.get('end_time', 0))}\n"
+        if state_message:
+            result += f"- **State Message:** {state_message}\n"
+        if cluster_id:
+            result += f"- **Cluster ID:** {cluster_id}\n"
+        if dbfs_dest:
+            result += f"- **Log Destination:** {dbfs_dest}\n"
+
+        # 2. Get run output (errors, logs, notebook output)
+        result += "\n---\n\n"
+        try:
+            output = jm.get_job_run_output(run_id)
+
+            error = output.get("error", "")
+            error_trace = output.get("error_trace", "")
+            logs = output.get("logs", "")
+            notebook_output = output.get("notebook_output", {})
+
+            if error:
+                result += f"### Error\n\n```\n{error}\n```\n\n"
+            if error_trace:
+                result += f"### Error Trace\n\n```\n{error_trace}\n```\n\n"
+            if notebook_output:
+                nb_result = notebook_output.get("result", "")
+                if nb_result:
+                    result += f"### Notebook Output\n\n```\n{nb_result}\n```\n\n"
+            if logs:
+                result += f"### Driver Logs (excerpt)\n\n```\n{logs}\n```\n\n"
+
+            if not any([error, error_trace, logs, notebook_output]):
+                result += "_No output, errors, or logs returned by the run output API._\n\n"
+        except Exception as oe:
+            result += f"_Could not fetch run output: {oe}_\n\n"
+
+        # 3. Cluster events
+        if include_cluster_events and cluster_id:
+            result += "---\n\n"
+            try:
+                client = get_api_client(workspace_name)
+                events_resp = client.post(
+                    "/clusters/events",
+                    json_data={"cluster_id": cluster_id, "limit": 25},
+                )
+                events = events_resp.get("events", [])
+                if events:
+                    result += f"### Cluster Events (last {len(events)})\n\n"
+                    result += "| Timestamp | Event |\n"
+                    result += "| --- | --- |\n"
+                    for ev in events:
+                        ts = _ts(ev.get("timestamp", 0))
+                        ev_type = ev.get("type", "UNKNOWN")
+                        reason = ev.get("details", {}).get("reason", {})
+                        code = reason.get("code", "")
+                        summary = ev_type
+                        if code:
+                            summary += f" ({code})"
+                        result += f"| {ts} | {summary} |\n"
+                else:
+                    result += "_No cluster events found._\n\n"
+            except Exception as ce:
+                result += f"_Could not fetch cluster events: {ce}_\n\n"
+
+        # 4. Hint about full log files
+        if cluster_id:
+            result += "\n---\n\n### Next Steps for Full Logs\n\n"
+            if dbfs_dest:
+                log_path = f"{dbfs_dest}/{cluster_id}/driver"
+                result += f"Full driver logs are available at: `{log_path}`\n\n"
+            result += "Use these tools for deeper investigation:\n"
+            result += f'- `databricks_list_cluster_log_files(cluster_id="{cluster_id}")` — browse available log files\n'
+            result += '- `databricks_read_cluster_log_file(file_path="...")` — read specific log content\n'
+            result += f'- `databricks_get_cluster_events(cluster_id="{cluster_id}")` — detailed cluster events with filters\n'
+
+        return enforce_character_limit(result)
+    except Exception as e:
+        return f"Error getting job run logs: {e}"
+
+
+@mcp.tool(
+    name="databricks_get_job_run_logs",
+    annotations={"title": "Get Job Run Logs (All-in-One)", **READ_ONLY_ANNOTATIONS},
+)
+def get_job_run_logs(
+    run_id: int,
+    include_cluster_events: bool = True,
+    workspace: Optional[str] = None,
+) -> str:
+    """
+    All-in-one diagnostic tool for a job run — the recommended starting point
+    when debugging a failed job.
+
+    Combines: run metadata, run output (errors, notebook output, driver logs),
+    cluster events, and hints for accessing full log files via DBFS.
+
+    Use when: a job run failed and you need to understand why.
+    Do NOT use when: you only need job configuration — use
+    databricks_get_job_details.
+
+    Args:
+        run_id: The job run ID to diagnose
+        include_cluster_events: Fetch cluster lifecycle events too (default True)
+        workspace: Target workspace name (uses default if omitted)
+
+    Returns:
+        Comprehensive diagnostic report with errors, logs, events, and next steps
+    """
+    return _get_job_run_logs(run_id, include_cluster_events, workspace)
 
 
 def run_server() -> None:

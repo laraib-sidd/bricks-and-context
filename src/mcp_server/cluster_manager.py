@@ -4,6 +4,7 @@ Cluster and SQL Warehouse status for Databricks.
 Read-only tools to inspect compute resources and diagnose connectivity issues.
 """
 
+import json
 from typing import Any, Dict, List, Optional
 
 from .api_client import get_api_client
@@ -15,6 +16,15 @@ from .constants import (
     pagination_footer,
 )
 from .workspaces import resolve_workspace_name
+
+
+def _ts_to_str(epoch_ms: int) -> str:
+    """Convert epoch milliseconds to a human-readable timestamp."""
+    if not epoch_ms:
+        return "N/A"
+    from datetime import datetime
+
+    return datetime.fromtimestamp(epoch_ms / 1000).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def _list_clusters(
@@ -140,6 +150,75 @@ def _get_warehouse_status(warehouse_id: str, workspace: Optional[str] = None) ->
         return f"Error getting warehouse {warehouse_id}: {e}"
 
 
+def _get_cluster_events(
+    cluster_id: str,
+    limit: int = 50,
+    event_types: Optional[str] = None,
+    workspace: Optional[str] = None,
+) -> str:
+    """Get activity events for a specific cluster."""
+    try:
+        ws = resolve_workspace_name(workspace)
+        client = get_api_client(ws)
+        payload: Dict[str, Any] = {
+            "cluster_id": cluster_id,
+            "limit": min(limit, 500),
+        }
+
+        if event_types:
+            payload["event_types"] = [e.strip() for e in event_types.split(",")]
+
+        resp = client.post("/clusters/events", json_data=payload)
+
+        events = resp.get("events", [])
+        if not events:
+            return f"No events found for cluster {cluster_id}."
+
+        total_count = resp.get("total_count", len(events))
+        result = f"## Cluster Events for `{cluster_id}`\n\n"
+        result += f"_Showing {len(events)} of {total_count} total events._\n\n"
+        result += "| Timestamp | Event Type | Details |\n"
+        result += "| --- | --- | --- |\n"
+
+        for event in events:
+            ts = _ts_to_str(event.get("timestamp", 0))
+            event_type = event.get("type", "UNKNOWN")
+
+            details_obj = event.get("details", {})
+            details_parts: List[str] = []
+
+            reason = details_obj.get("reason", {})
+            if reason:
+                code = reason.get("code", "")
+                params = reason.get("parameters", {})
+                msg = reason.get("type", "")
+                detail_str = f"{code}" if code else ""
+                if msg:
+                    detail_str += f" ({msg})"
+                if params:
+                    detail_str += f" {json.dumps(params)}"
+                if detail_str:
+                    details_parts.append(detail_str)
+
+            current_num = details_obj.get("current_num_workers", "")
+            target_num = details_obj.get("target_num_workers", "")
+            if current_num or target_num:
+                details_parts.append(f"workers: {current_num} -> {target_num}")
+
+            user = details_obj.get("user", "")
+            if user:
+                details_parts.append(f"by: {user}")
+
+            detail_text = "; ".join(details_parts) if details_parts else "-"
+            detail_text = detail_text.replace("|", "\\|").replace("\n", " ")
+
+            result += f"| {ts} | {event_type} | {detail_text} |\n"
+
+        return enforce_character_limit(result)
+    except Exception as e:
+        return f"Error getting cluster events: {e}"
+
+
 def register_cluster_tools(mcp: Any) -> None:
     @mcp.tool(
         name="databricks_list_clusters",
@@ -217,3 +296,35 @@ def register_cluster_tools(mcp: Any) -> None:
             running clusters
         """
         return _get_warehouse_status(warehouse_id, workspace)
+
+    @mcp.tool(
+        name="databricks_get_cluster_events",
+        annotations={"title": "Get Cluster Events", **READ_ONLY_ANNOTATIONS},
+    )
+    def get_cluster_events(
+        cluster_id: str,
+        limit: int = 50,
+        event_types: Optional[str] = None,
+        workspace: Optional[str] = None,
+    ) -> str:
+        """
+        Get activity events for a cluster (startup, termination, autoscaling, etc.).
+
+        Useful for diagnosing cluster failures, seeing init script outcomes,
+        and understanding cluster lifecycle.
+
+        Use when: debugging why a cluster failed to start or terminated unexpectedly.
+        Do NOT use when: you need job-level diagnostics — use
+        databricks_get_job_run_logs for an all-in-one view.
+
+        Args:
+            cluster_id: The Databricks cluster ID
+            limit: Max events to return (default 50, max 500)
+            event_types: Optional comma-separated filter (e.g.
+                         "RUNNING,TERMINATING,INIT_SCRIPTS_FINISHED")
+            workspace: Target workspace name (uses default if omitted)
+
+        Returns:
+            Markdown table of cluster events with timestamps and details
+        """
+        return _get_cluster_events(cluster_id, limit, event_types, workspace)
