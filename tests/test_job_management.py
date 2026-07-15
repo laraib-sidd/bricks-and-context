@@ -109,14 +109,104 @@ class TestDatabricksJobManager:
         manager = DatabricksJobManager(
             host="test-workspace.cloud.databricks.com", token="test-token"
         )
-        jobs = manager.list_jobs(limit=10)
+        jobs, truncated = manager.list_jobs()
 
+        assert not truncated
         assert len(jobs) == 1
         assert jobs[0].job_id == 123
         assert jobs[0].name == "Test Job"
         assert jobs[0].job_type == "NOTEBOOK"
         assert jobs[0].creator_email == "test@example.com"
         assert jobs[0].last_run_state == "TERMINATED"
+
+    @patch.dict(
+        "os.environ",
+        {
+            "DATABRICKS_HOST": "test-workspace.cloud.databricks.com",
+            "DATABRICKS_TOKEN": "test-token",
+        },
+    )
+    @patch("src.mcp_server.job_manager.requests.Session")
+    @patch("src.mcp_server.job_manager.log_databricks_event")
+    def test_list_jobs_follows_pagination(self, mock_log, mock_session_cls):
+        """A job beyond the first page must still be returned (regression for #88)."""
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
+        def make_job(job_id):
+            return {
+                "job_id": job_id,
+                "settings": {"name": f"job-{job_id}"},
+                "creator_user_name": "test@example.com",
+                "created_time": 1640995200000,
+            }
+
+        page_1 = Mock()
+        page_1.status_code = 200
+        page_1.content = b"{}"
+        page_1.json.return_value = {
+            "jobs": [make_job(1)],
+            "has_more": True,
+            "next_page_token": "page-2-token",
+        }
+        page_2 = Mock()
+        page_2.status_code = 200
+        page_2.content = b"{}"
+        page_2.json.return_value = {
+            "jobs": [make_job(2)],
+            "has_more": False,
+        }
+        mock_session.request.side_effect = [page_1, page_2]
+
+        manager = DatabricksJobManager(
+            host="test-workspace.cloud.databricks.com", token="test-token"
+        )
+        jobs, truncated = manager.list_jobs()
+
+        assert not truncated
+        assert [j.job_id for j in jobs] == [1, 2]
+        assert mock_session.request.call_count == 2
+        second_call_params = mock_session.request.call_args_list[1].kwargs["params"]
+        assert second_call_params["page_token"] == "page-2-token"
+
+    @patch.dict(
+        "os.environ",
+        {
+            "DATABRICKS_HOST": "test-workspace.cloud.databricks.com",
+            "DATABRICKS_TOKEN": "test-token",
+        },
+    )
+    @patch("src.mcp_server.job_manager.requests.Session")
+    @patch("src.mcp_server.job_manager.log_databricks_event")
+    def test_list_jobs_reports_truncation_at_safety_cap(self, mock_log, mock_session_cls):
+        """If the safety cap is hit before has_more is False, callers must be told."""
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
+        page = Mock()
+        page.status_code = 200
+        page.content = b"{}"
+        page.json.return_value = {
+            "jobs": [
+                {
+                    "job_id": 1,
+                    "settings": {"name": "job-1"},
+                    "creator_user_name": "test@example.com",
+                    "created_time": 0,
+                }
+            ],
+            "has_more": True,
+            "next_page_token": "next",
+        }
+        mock_session.request.return_value = page
+
+        manager = DatabricksJobManager(
+            host="test-workspace.cloud.databricks.com", token="test-token"
+        )
+        jobs, truncated = manager.list_jobs(max_jobs=1)
+
+        assert truncated
+        assert len(jobs) == 1
 
     @patch.dict(
         "os.environ",
@@ -332,7 +422,7 @@ class TestMCPJobTools:
                 last_run_state="TERMINATED",
             )
         ]
-        mock_manager.list_jobs.return_value = mock_jobs
+        mock_manager.list_jobs.return_value = (mock_jobs, False)
         mock_get_manager.return_value = mock_manager
 
         result = _list_jobs(limit=10, name_filter="test")
@@ -342,7 +432,7 @@ class TestMCPJobTools:
         assert "Test Job" in result
         assert "NOTEBOOK" in result
         assert "TERMINATED" in result
-        mock_manager.list_jobs.assert_called_once_with(limit=10, name_filter="test")
+        mock_manager.list_jobs.assert_called_once_with()
 
     @patch("src.mcp_server.mcp_server.get_job_manager")
     @patch("src.mcp_server.mcp_server.log_mcp_event")
@@ -473,7 +563,7 @@ class TestMCPJobTools:
     def test_list_jobs_no_results(self, mock_log, mock_get_manager):
         """Test list_jobs when no jobs are found."""
         mock_manager = Mock()
-        mock_manager.list_jobs.return_value = []
+        mock_manager.list_jobs.return_value = ([], False)
         mock_get_manager.return_value = mock_manager
 
         result = _list_jobs()

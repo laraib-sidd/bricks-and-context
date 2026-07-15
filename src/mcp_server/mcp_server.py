@@ -633,16 +633,28 @@ def _list_jobs(
 
         workspace_name = resolve_workspace_name(workspace)
         job_manager = get_job_manager(workspace_name)
-        fetch_limit = min(offset + limit, 100)
-        all_jobs = job_manager.list_jobs(limit=fetch_limit, name_filter=name_filter)
+        all_jobs, truncated = job_manager.list_jobs()
+        fetched_count = len(all_jobs)
+
+        if name_filter:
+            needle = name_filter.lower()
+            all_jobs = [j for j in all_jobs if needle in j.name.lower()]
+
+        truncation_notice = (
+            f"\n\n⚠️ Searched first {fetched_count} jobs before hitting the safety cap — "
+            "the workspace has more jobs than were scanned, so results may be incomplete."
+            if truncated
+            else ""
+        )
 
         if not all_jobs:
-            return "No jobs found in the Databricks workspace."
+            msg = f"No jobs found matching '{name_filter}'." if name_filter else "No jobs found in the Databricks workspace."
+            return msg + truncation_notice
 
         total = len(all_jobs)
         jobs = all_jobs[offset : offset + limit]
         if not jobs:
-            return f"No jobs at offset {offset} (total: {total})."
+            return f"No jobs at offset {offset} (total: {total})." + truncation_notice
 
         header = "| Job ID | Job Name | Type | Creator | Status | Last Run |"
         separator = "| --- | --- | --- | --- | --- | --- |"
@@ -660,6 +672,7 @@ def _list_jobs(
             + pagination_footer(
                 count=len(jobs), offset=offset, limit=limit, total=total
             )
+            + truncation_notice
         )
 
         log_mcp_event("list_jobs", "SUCCESS", f"Retrieved {len(jobs)} jobs")
