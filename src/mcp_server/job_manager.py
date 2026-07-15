@@ -180,56 +180,75 @@ class DatabricksJobManager:
             log_databricks_event("JOBS", "ERROR", error_msg, "ERROR")
             raise
 
-    def list_jobs(
-        self, limit: int = 25, name_filter: Optional[str] = None
-    ) -> List[JobInfo]:
+    def list_jobs(self, max_jobs: int = 1000) -> Tuple[List[JobInfo], bool]:
         """
-        List Databricks jobs with optional filtering.
+        List Databricks jobs, following the Jobs API's pagination
+        (has_more/next_page_token) across the whole workspace instead of
+        stopping after the first page.
+
+        Note: we deliberately do not use the API's `name` query param —
+        it is an exact (case-insensitive) match, not a substring search,
+        so it's unsuitable for "find a job I know exists" lookups. Callers
+        should fetch the full list and filter client-side instead.
 
         Args:
-            limit: Maximum number of jobs to return (default: 25, max: 100)
-            name_filter: Optional filter for job names (case-insensitive partial match)
+            max_jobs: Safety cap on total jobs fetched across all pages
+                      before giving up, even if more remain (default: 1000)
 
         Returns:
-            List of JobInfo objects
+            Tuple of (list of JobInfo objects, truncated) where `truncated`
+            is True if `max_jobs` was hit before the workspace's job list
+            was exhausted (i.e. results may be incomplete).
         """
         try:
-            # Limit the number of results to prevent overwhelming responses
-            limit = min(limit, 100)
+            jobs: List[JobInfo] = []
+            page_token: Optional[str] = None
+            truncated = False
 
-            params: Dict[str, Any] = {"limit": limit}
-            if name_filter:
-                params["name"] = name_filter
+            while True:
+                params: Dict[str, Any] = {"limit": min(100, max_jobs - len(jobs))}
+                if page_token:
+                    params["page_token"] = page_token
 
-            response = self._make_request("GET", "/jobs/list", params=params)
+                response = self._make_request("GET", "/jobs/list", params=params)
 
-            jobs = []
-            for job_data in response.get("jobs", []):
-                settings = job_data.get("settings", {})
-                created_time = job_data.get("created_time", 0)
+                for job_data in response.get("jobs", []):
+                    settings = job_data.get("settings", {})
+                    created_time = job_data.get("created_time", 0)
 
-                # Get last run information if available
-                last_run_state = None
-                last_run_time = None
-                if "last_run" in job_data:
-                    last_run = job_data["last_run"]
-                    last_run_state = last_run.get("state", {}).get("life_cycle_state")
-                    last_run_time = last_run.get("start_time")
+                    # Get last run information if available
+                    last_run_state = None
+                    last_run_time = None
+                    if "last_run" in job_data:
+                        last_run = job_data["last_run"]
+                        last_run_state = last_run.get("state", {}).get("life_cycle_state")
+                        last_run_time = last_run.get("start_time")
 
-                job_info = JobInfo(
-                    job_id=job_data["job_id"],
-                    name=settings.get("name", f"Job {job_data['job_id']}"),
-                    creator_email=job_data.get("creator_user_name", "unknown"),
-                    created_time=created_time,
-                    job_type=self._determine_job_type(settings),
-                    status="ACTIVE" if job_data.get("settings") else "UNKNOWN",
-                    last_run_state=last_run_state,
-                    last_run_time=last_run_time,
-                )
-                jobs.append(job_info)
+                    job_info = JobInfo(
+                        job_id=job_data["job_id"],
+                        name=settings.get("name", f"Job {job_data['job_id']}"),
+                        creator_email=job_data.get("creator_user_name", "unknown"),
+                        created_time=created_time,
+                        job_type=self._determine_job_type(settings),
+                        status="ACTIVE" if job_data.get("settings") else "UNKNOWN",
+                        last_run_state=last_run_state,
+                        last_run_time=last_run_time,
+                    )
+                    jobs.append(job_info)
 
-            log_databricks_event("JOBS", "LIST", f"Retrieved {len(jobs)} jobs")
-            return jobs
+                has_more = response.get("has_more", False)
+                page_token = response.get("next_page_token")
+
+                if len(jobs) >= max_jobs and has_more:
+                    truncated = True
+                    break
+                if not has_more or not page_token:
+                    break
+
+            log_databricks_event(
+                "JOBS", "LIST", f"Retrieved {len(jobs)} jobs (truncated: {truncated})"
+            )
+            return jobs, truncated
 
         except Exception as e:
             log_databricks_event("JOBS", "ERROR", f"Failed to list jobs: {e}", "ERROR")
