@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `get_job_details` no longer fails outright when the Jobs API 400s with a
+  misleading "does not exist" for a job that's actually just ACL-gapped
+  (this connection's token lacks `CAN_VIEW`). It now falls back to
+  `system.lakeflow.jobs`/`job_tasks` for partial info (name, creator/run_as,
+  trigger type, task keys) and marks the result `partial` with an explanation,
+  instead of erroring with no information. Genuinely missing job IDs still
+  raise as before. (de-repo-artifact#90, option 3 of that issue's proposals)
+
 ## [0.2.0] - 2026-01-12
 
 ### Added

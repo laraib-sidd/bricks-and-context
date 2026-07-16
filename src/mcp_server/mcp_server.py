@@ -728,18 +728,27 @@ def _get_job_details(job_id: int, workspace: Optional[str] = None) -> str:
 
         # Format for AI consumption
         result = f"Job Details for ID {job_id}:\n\n"
+        if details.get("partial"):
+            result += (
+                f"⚠️ **Partial results**: {details['partial_reason']}\n\n"
+            )
         result += f"**Name**: {details['name']}\n"
         result += f"**Type**: {details['job_type']}\n"
         result += f"**Creator**: {details['creator']}\n"
+        if details.get("run_as"):
+            result += f"**Run As**: {details['run_as']}\n"
         result += f"**Created**: {details['created_time']}\n"
-        result += f"**Timeout**: {details.get('timeout_seconds', 'No limit')} seconds\n"
-        result += f"**Max Concurrent Runs**: {details['max_concurrent_runs']}\n\n"
+        result += f"**Timeout**: {details.get('timeout_seconds') or 'No limit'} seconds\n"
+        result += f"**Max Concurrent Runs**: {details.get('max_concurrent_runs') or 'Unknown'}\n\n"
 
         if details["schedule"]:
             schedule = details["schedule"]
             result += f"**Schedule**:\n"
-            result += f"- Cron: {schedule.get('quartz_cron_expression', 'None')}\n"
-            result += f"- Timezone: {schedule.get('timezone_id', 'UTC')}\n"
+            if "quartz_cron_expression" in schedule:
+                result += f"- Cron: {schedule.get('quartz_cron_expression', 'None')}\n"
+                result += f"- Timezone: {schedule.get('timezone_id', 'UTC')}\n"
+            elif schedule.get("trigger_type"):
+                result += f"- Trigger Type: {schedule['trigger_type']}\n"
             result += f"- Status: {schedule.get('pause_status', 'UNPAUSED')}\n\n"
 
         cluster_config = details["cluster_config"]

@@ -17,6 +17,7 @@ from .logger import log_databricks_event, logger
 from .config import get_setting_int
 from .error_handler import with_databricks_retry
 from .workspaces import get_workspace_config, resolve_workspace_name
+from .connection_pool import get_pool, PooledConnection
 
 import requests
 
@@ -298,10 +299,120 @@ class DatabricksJobManager:
             return details
 
         except Exception as e:
+            error_str = str(e)
+            # The Jobs API returns the same 400 "does not exist" for a truly
+            # missing job_id and for a job that exists but that this
+            # connection's identity lacks CAN_VIEW on (see de-repo-artifact
+            # #89/#90) - the two are indistinguishable from the error alone.
+            # Try to recover partial info from system.lakeflow before giving up.
+            if "HTTP 400" in error_str and "does not exist" in error_str.lower():
+                fallback = self._get_job_details_from_system_tables(job_id)
+                if fallback is not None:
+                    log_databricks_event(
+                        "JOBS",
+                        "DETAILS_PARTIAL",
+                        f"Job {job_id} not visible via Jobs API; "
+                        "returned partial info from system.lakeflow",
+                    )
+                    return fallback
+
             log_databricks_event(
                 "JOBS", "ERROR", f"Failed to get job {job_id} details: {e}", "ERROR"
             )
             raise
+
+    def _get_job_details_from_system_tables(self, job_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Best-effort fallback when /jobs/get 400s with "does not exist".
+
+        Queries system.lakeflow.jobs and system.lakeflow.job_tasks, which are
+        populated from the account-level audit/billing pipeline rather than
+        the per-job ACL this connection's token is scoped to, so they surface
+        jobs the Jobs API otherwise hides. Only name, creator/run_as, trigger
+        type, and task keys are available this way - no cluster spec, task
+        parameters, or notebook/script paths (those only come from /jobs/get).
+
+        Returns None if the job isn't found in system tables either (i.e.
+        it genuinely doesn't exist), so callers can fall back to raising the
+        original error.
+        """
+        try:
+            pool = get_pool(self.workspace_name)
+            with PooledConnection(pool) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT name, creator_id, creator_user_name, run_as,
+                           run_as_user_name, trigger_type, paused,
+                           timeout_seconds, create_time
+                    FROM system.lakeflow.jobs
+                    WHERE job_id = %s AND delete_time IS NULL
+                    ORDER BY change_time DESC
+                    LIMIT 1
+                    """,
+                    (str(job_id),),
+                )
+                row = cursor.fetchone()
+                if row is None or cursor.description is None:
+                    return None
+
+                columns = [d[0] for d in cursor.description]
+                job_row = dict(zip(columns, row))
+
+                cursor.execute(
+                    """
+                    SELECT DISTINCT task_key
+                    FROM system.lakeflow.job_tasks
+                    WHERE job_id = %s AND delete_time IS NULL
+                    """,
+                    (str(job_id),),
+                )
+                task_keys = [r[0] for r in cursor.fetchall()]
+        except Exception as e:
+            # A failure here should never mask the original /jobs/get error -
+            # log and let the caller fall back to raising it.
+            log_databricks_event(
+                "JOBS",
+                "ERROR",
+                f"system.lakeflow fallback failed for job {job_id}: {e}",
+                "ERROR",
+            )
+            return None
+
+        create_time = job_row.get("create_time")
+        task_keys = sorted(k for k in task_keys if k)
+
+        return {
+            "job_id": job_id,
+            "name": job_row.get("name") or f"Job {job_id}",
+            "created_time": str(create_time) if create_time else "Unknown",
+            "creator": job_row.get("creator_user_name") or job_row.get("creator_id") or "unknown",
+            "run_as": job_row.get("run_as_user_name") or job_row.get("run_as"),
+            "job_type": "multi_task" if len(task_keys) > 1 else "single_task",
+            "schedule": {
+                "trigger_type": job_row.get("trigger_type"),
+                "pause_status": "PAUSED" if job_row.get("paused") else "UNPAUSED",
+            },
+            "cluster_config": {"type": "unavailable"},
+            "task_config": {"type": "unavailable"},
+            "tasks": [{"task_key": k} for k in task_keys],
+            "task_summary": f"{len(task_keys)} task(s) - names only, full config unavailable",
+            "timeout_seconds": job_row.get("timeout_seconds"),
+            "max_concurrent_runs": None,
+            "email_notifications": {},
+            "webhook_notifications": {},
+            "access_control_list": [],
+            "partial": True,
+            "partial_reason": (
+                "Direct Jobs API call failed for this job_id (likely an ACL "
+                "visibility gap - this MCP connection lacks CAN_VIEW on the "
+                "job; see de-repo-artifact#90 for the real fix). Showing "
+                "metadata reconstructed from system.lakeflow.jobs/job_tasks "
+                "instead: name, schedule/trigger type, task keys, and "
+                "run_as/creator. Full cluster spec, task parameters, and "
+                "notebook/script paths are not available this way."
+            ),
+        }
 
     def get_job_runs(
         self, job_id: int, limit: int = 10, active_only: bool = False
