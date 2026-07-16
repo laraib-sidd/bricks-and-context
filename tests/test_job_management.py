@@ -321,6 +321,120 @@ class TestDatabricksJobManager:
             "DATABRICKS_TOKEN": "test-token",
         },
     )
+    @patch("src.mcp_server.job_manager.get_pool")
+    @patch("src.mcp_server.job_manager.PooledConnection")
+    @patch("src.mcp_server.job_manager.requests.Session")
+    @patch("src.mcp_server.job_manager.log_databricks_event")
+    def test_get_job_details_falls_back_to_system_tables_on_acl_gap(
+        self, mock_log, mock_session_cls, mock_pooled_conn, mock_get_pool
+    ):
+        """
+        When /jobs/get 400s with "does not exist" (de-repo-artifact#89/#90 -
+        this MCP connection lacks CAN_VIEW on the job), get_job_details should
+        recover partial info from system.lakeflow instead of raising.
+        """
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
+        mock_response = Mock()
+        mock_response.status_code = 400
+        mock_response.text = '{"error_code":"RESOURCE_DOES_NOT_EXIST","message":"Job 555 does not exist."}'
+        mock_response.content = mock_response.text.encode()
+        mock_session.request.return_value = mock_response
+
+        mock_conn = Mock()
+        mock_pooled_conn.return_value.__enter__.return_value = mock_conn
+        mock_pooled_conn.return_value.__exit__.return_value = None
+
+        mock_cursor = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.description = [
+            ("name",),
+            ("creator_id",),
+            ("creator_user_name",),
+            ("run_as",),
+            ("run_as_user_name",),
+            ("trigger_type",),
+            ("paused",),
+            ("timeout_seconds",),
+            ("create_time",),
+        ]
+        mock_cursor.fetchone.return_value = (
+            "Ungoverned Click-Ops Job",
+            "creator-sp-id",
+            "someone@hingehealth.com",
+            "run-as-sp-id",
+            "svc-principal@hingehealth.com",
+            "PERIODIC",
+            False,
+            3600,
+            "2026-01-01 00:00:00",
+        )
+        mock_cursor.fetchall.return_value = [("task_a",), ("task_b",)]
+
+        manager = DatabricksJobManager(
+            host="test-workspace.cloud.databricks.com", token="test-token"
+        )
+        details = manager.get_job_details(555)
+
+        assert details["partial"] is True
+        assert "does not exist" not in details["partial_reason"].lower()
+        assert details["name"] == "Ungoverned Click-Ops Job"
+        assert details["creator"] == "someone@hingehealth.com"
+        assert details["run_as"] == "svc-principal@hingehealth.com"
+        assert details["schedule"]["trigger_type"] == "PERIODIC"
+        assert {t["task_key"] for t in details["tasks"]} == {"task_a", "task_b"}
+        assert details["cluster_config"]["type"] == "unavailable"
+
+    @patch.dict(
+        "os.environ",
+        {
+            "DATABRICKS_HOST": "test-workspace.cloud.databricks.com",
+            "DATABRICKS_TOKEN": "test-token",
+        },
+    )
+    @patch("src.mcp_server.job_manager.get_pool")
+    @patch("src.mcp_server.job_manager.PooledConnection")
+    @patch("src.mcp_server.job_manager.requests.Session")
+    @patch("src.mcp_server.job_manager.log_databricks_event")
+    def test_get_job_details_raises_when_truly_missing(
+        self, mock_log, mock_session_cls, mock_pooled_conn, mock_get_pool
+    ):
+        """
+        A job_id that's genuinely missing (not just ACL-gapped) should still
+        raise - the system.lakeflow fallback finds nothing, so the original
+        error propagates instead of being swallowed.
+        """
+        mock_session = Mock()
+        mock_session_cls.return_value = mock_session
+
+        mock_response = Mock()
+        mock_response.status_code = 400
+        mock_response.text = '{"error_code":"RESOURCE_DOES_NOT_EXIST","message":"Job 999999 does not exist."}'
+        mock_response.content = mock_response.text.encode()
+        mock_session.request.return_value = mock_response
+
+        mock_conn = Mock()
+        mock_pooled_conn.return_value.__enter__.return_value = mock_conn
+        mock_pooled_conn.return_value.__exit__.return_value = None
+        mock_cursor = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+
+        manager = DatabricksJobManager(
+            host="test-workspace.cloud.databricks.com", token="test-token"
+        )
+
+        with pytest.raises(ValueError, match="does not exist"):
+            manager.get_job_details(999999)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "DATABRICKS_HOST": "test-workspace.cloud.databricks.com",
+            "DATABRICKS_TOKEN": "test-token",
+        },
+    )
     @patch("src.mcp_server.job_manager.requests.Session")
     @patch("src.mcp_server.job_manager.log_databricks_event")
     def test_trigger_job_success(self, mock_log, mock_session_cls):
