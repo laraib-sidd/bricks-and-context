@@ -1,4 +1,5 @@
 """Test circuit breaker and retry logic."""
+
 from __future__ import annotations
 
 import time
@@ -40,7 +41,9 @@ def test_circuit_breaker_transitions_to_half_open():
 
 
 def test_circuit_breaker_closes_after_success_threshold():
-    config = CircuitBreakerConfig(failure_threshold=1, recovery_timeout_seconds=0.1, success_threshold=2)
+    config = CircuitBreakerConfig(
+        failure_threshold=1, recovery_timeout_seconds=0.1, success_threshold=2
+    )
     cb = CircuitBreaker("test", config)
     cb.record_failure()
     time.sleep(0.15)
@@ -75,7 +78,11 @@ def test_retry_decorator_retries_on_retryable():
     handler = ErrorHandler()
     call_count = 0
 
-    @handler.with_retry("test_retry", RetryConfig(max_attempts=3, base_delay_seconds=0.01), circuit_breaker=False)
+    @handler.with_retry(
+        "test_retry",
+        RetryConfig(max_attempts=3, base_delay_seconds=0.01),
+        circuit_breaker=False,
+    )
     def flaky():
         nonlocal call_count
         call_count += 1
@@ -92,7 +99,9 @@ def test_retry_skips_non_retryable():
     handler = ErrorHandler()
     call_count = 0
 
-    @handler.with_retry("test_no_retry", RetryConfig(max_attempts=3), circuit_breaker=False)
+    @handler.with_retry(
+        "test_no_retry", RetryConfig(max_attempts=3), circuit_breaker=False
+    )
     def fail_auth():
         nonlocal call_count
         call_count += 1

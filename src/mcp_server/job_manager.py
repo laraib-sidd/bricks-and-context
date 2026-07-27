@@ -222,7 +222,9 @@ class DatabricksJobManager:
                     last_run_time = None
                     if "last_run" in job_data:
                         last_run = job_data["last_run"]
-                        last_run_state = last_run.get("state", {}).get("life_cycle_state")
+                        last_run_state = last_run.get("state", {}).get(
+                            "life_cycle_state"
+                        )
                         last_run_time = last_run.get("start_time")
 
                     job_info = JobInfo(
@@ -321,7 +323,9 @@ class DatabricksJobManager:
             )
             raise
 
-    def _get_job_details_from_system_tables(self, job_id: int) -> Optional[Dict[str, Any]]:
+    def _get_job_details_from_system_tables(
+        self, job_id: int
+    ) -> Optional[Dict[str, Any]]:
         """
         Best-effort fallback when /jobs/get 400s with "does not exist".
 
@@ -386,7 +390,9 @@ class DatabricksJobManager:
             "job_id": job_id,
             "name": job_row.get("name") or f"Job {job_id}",
             "created_time": str(create_time) if create_time else "Unknown",
-            "creator": job_row.get("creator_user_name") or job_row.get("creator_id") or "unknown",
+            "creator": job_row.get("creator_user_name")
+            or job_row.get("creator_id")
+            or "unknown",
             "run_as": job_row.get("run_as_user_name") or job_row.get("run_as"),
             "job_type": "multi_task" if len(task_keys) > 1 else "single_task",
             "schedule": {
@@ -746,7 +752,10 @@ class DatabricksJobManager:
 
     def get_job_run_details(self, run_id: int) -> Dict[str, Any]:
         """Get full run details (metadata + cluster info) for diagnostics."""
-        return self._make_request("GET", "/jobs/runs/get", params={"run_id": run_id})
+        result: Dict[str, Any] = self._make_request(
+            "GET", "/jobs/runs/get", params={"run_id": run_id}
+        )
+        return result
 
     def _format_timestamp(self, timestamp_ms: int) -> str:
         """Format timestamp for human readability."""

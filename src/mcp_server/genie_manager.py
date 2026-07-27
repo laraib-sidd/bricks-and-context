@@ -157,8 +157,9 @@ def _list_spaces(workspace: Optional[str] = None) -> str:
             desc = (s.get("description", "") or "")[:100]
             rows.append(f"| {sid} | {title} | {desc} |")
 
-        result = f"Genie Spaces ({len(spaces)} found):\n\n{header}\n{sep}\n" + "\n".join(
-            rows
+        result = (
+            f"Genie Spaces ({len(spaces)} found):\n\n{header}\n{sep}\n"
+            + "\n".join(rows)
         )
         return enforce_character_limit(result)
     except Exception as e:
@@ -364,9 +365,7 @@ def _ask_question(
             )
 
         if status not in ("COMPLETED", "FAILED", "CANCELLED"):
-            msg = _genie_poll_message(
-                client, space_id, msg_conversation_id, message_id
-            )
+            msg = _genie_poll_message(client, space_id, msg_conversation_id, message_id)
         else:
             msg = resp.get("message", resp)
 
@@ -390,8 +389,7 @@ def _ask_question(
                             manifest = stmt.get("manifest", {})
                             columns = manifest.get("schema", {}).get("columns", [])
                             col_names = [
-                                c.get("name", f"col_{i}")
-                                for i, c in enumerate(columns)
+                                c.get("name", f"col_{i}") for i, c in enumerate(columns)
                             ]
                             data_array = stmt.get("result", {}).get("data_array", [])
 
@@ -413,15 +411,15 @@ def _ask_question(
                                 total = stmt.get("result", {}).get(
                                     "row_count", row_count
                                 )
-                                formatted += f"\n_Showing {row_count} of {total} total rows._\n"
+                                formatted += (
+                                    f"\n_Showing {row_count} of {total} total rows._\n"
+                                )
                             else:
                                 formatted += "\n_Query returned no rows._\n"
                         elif result_status == "RUNNING":
                             formatted += "\n_Query is still executing. Use `databricks_genie_get_query_result` to retrieve results later._\n"
                     except Exception as qe:
-                        formatted += (
-                            f"\n_Could not fetch query results: {qe}_\n"
-                        )
+                        formatted += f"\n_Could not fetch query results: {qe}_\n"
 
         return enforce_character_limit(formatted)
     except Exception as e:

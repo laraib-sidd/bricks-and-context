@@ -176,23 +176,36 @@ class ErrorHandler:
 
         # Check rate limit FIRST — rate limit messages can contain "token" (e.g. "token bucket")
         # which would false-match the auth check below if order were reversed.
-        if any(keyword in error_str for keyword in ["rate limit", "too many requests", "429", "throttl"]):
+        if any(
+            keyword in error_str
+            for keyword in ["rate limit", "too many requests", "429", "throttl"]
+        ):
             return ErrorType.RATE_LIMIT
 
-        if any(keyword in error_str for keyword in ["authentication", "unauthorized", "forbidden"]):
+        if any(
+            keyword in error_str
+            for keyword in ["authentication", "unauthorized", "forbidden"]
+        ):
             return ErrorType.AUTHENTICATION
 
         # Narrow token match: only treat as auth when paired with a failure qualifier.
-        if "token" in error_str and any(keyword in error_str for keyword in ["expired", "invalid", "revoked"]):
+        if "token" in error_str and any(
+            keyword in error_str for keyword in ["expired", "invalid", "revoked"]
+        ):
             return ErrorType.AUTHENTICATION
 
         if "timeout" in error_str:
             return ErrorType.TIMEOUT
 
-        if any(keyword in error_str for keyword in ["network", "connection", "unreachable", "refused", "reset"]):
+        if any(
+            keyword in error_str
+            for keyword in ["network", "connection", "unreachable", "refused", "reset"]
+        ):
             return ErrorType.NETWORK
 
-        if any(keyword in error_str for keyword in ["databricks", "api error", "rest api"]):
+        if any(
+            keyword in error_str for keyword in ["databricks", "api error", "rest api"]
+        ):
             return ErrorType.DATABRICKS_API
 
         if any(keyword in error_str for keyword in ["sql", "query", "syntax"]):

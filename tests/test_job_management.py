@@ -178,7 +178,9 @@ class TestDatabricksJobManager:
     )
     @patch("src.mcp_server.job_manager.requests.Session")
     @patch("src.mcp_server.job_manager.log_databricks_event")
-    def test_list_jobs_reports_truncation_at_safety_cap(self, mock_log, mock_session_cls):
+    def test_list_jobs_reports_truncation_at_safety_cap(
+        self, mock_log, mock_session_cls
+    ):
         """If the safety cap is hit before has_more is False, callers must be told."""
         mock_session = Mock()
         mock_session_cls.return_value = mock_session

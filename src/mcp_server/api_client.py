@@ -79,9 +79,7 @@ class DatabricksAPIClient:
             # retryable — bad input won't succeed on retry and should not
             # trip the circuit breaker.
             if response.status_code < 500:
-                raise ValueError(
-                    f"client error: HTTP {response.status_code}: {body}"
-                )
+                raise ValueError(f"client error: HTTP {response.status_code}: {body}")
             raise Exception(
                 f"databricks api error: HTTP {response.status_code}: {body}"
             )

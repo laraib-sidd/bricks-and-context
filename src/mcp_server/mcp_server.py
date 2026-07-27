@@ -648,7 +648,11 @@ def _list_jobs(
         )
 
         if not all_jobs:
-            msg = f"No jobs found matching '{name_filter}'." if name_filter else "No jobs found in the Databricks workspace."
+            msg = (
+                f"No jobs found matching '{name_filter}'."
+                if name_filter
+                else "No jobs found in the Databricks workspace."
+            )
             return msg + truncation_notice
 
         total = len(all_jobs)
@@ -729,16 +733,16 @@ def _get_job_details(job_id: int, workspace: Optional[str] = None) -> str:
         # Format for AI consumption
         result = f"Job Details for ID {job_id}:\n\n"
         if details.get("partial"):
-            result += (
-                f"⚠️ **Partial results**: {details['partial_reason']}\n\n"
-            )
+            result += f"⚠️ **Partial results**: {details['partial_reason']}\n\n"
         result += f"**Name**: {details['name']}\n"
         result += f"**Type**: {details['job_type']}\n"
         result += f"**Creator**: {details['creator']}\n"
         if details.get("run_as"):
             result += f"**Run As**: {details['run_as']}\n"
         result += f"**Created**: {details['created_time']}\n"
-        result += f"**Timeout**: {details.get('timeout_seconds') or 'No limit'} seconds\n"
+        result += (
+            f"**Timeout**: {details.get('timeout_seconds') or 'No limit'} seconds\n"
+        )
         result += f"**Max Concurrent Runs**: {details.get('max_concurrent_runs') or 'Unknown'}\n\n"
 
         if details["schedule"]:
@@ -1617,7 +1621,9 @@ def _get_job_run_logs(
                 result += f"### Driver Logs (excerpt)\n\n```\n{logs}\n```\n\n"
 
             if not any([error, error_trace, logs, notebook_output]):
-                result += "_No output, errors, or logs returned by the run output API._\n\n"
+                result += (
+                    "_No output, errors, or logs returned by the run output API._\n\n"
+                )
         except Exception as oe:
             result += f"_Could not fetch run output: {oe}_\n\n"
 

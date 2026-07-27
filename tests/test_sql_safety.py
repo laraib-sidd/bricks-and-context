@@ -1,4 +1,5 @@
 """Test SQL identifier validation and read-only detection."""
+
 from __future__ import annotations
 
 import pytest

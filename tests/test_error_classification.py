@@ -1,4 +1,5 @@
 """Tests for error classification edge cases in ErrorHandler."""
+
 from __future__ import annotations
 
 from mcp_server.error_handler import ErrorHandler, ErrorType
